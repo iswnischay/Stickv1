@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dist-single/
+desktop/web/
+desktop/dist/
+desktop/node_modules/
+.env.local
+.env
+.DS_Store
