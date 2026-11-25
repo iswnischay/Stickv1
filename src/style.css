@@ -266,3 +266,10 @@ button:active:not(:disabled) { transform: translateY(1px) scale(0.97); }
 #pad-toast { position: fixed; left: 50%; bottom: 24px; z-index: 50; transform: translate(-50%, 20px); opacity: 0; pointer-events: none;
   background: var(--ink); color: var(--paper); font-weight: 700; padding: 10px 18px; border-radius: 999px; transition: opacity 0.2s ease, transform 0.25s ease; }
 #pad-toast.on { opacity: 1; transform: translate(-50%, 0); }
+.ult .builder { border-top: none; padding-top: 4px; }
+summary.build-btn { list-style: none; display: inline-block; cursor: pointer; font-family: var(--impact); text-transform: uppercase; letter-spacing: 0.03em; font-size: 1.1rem;
+  background: var(--el); color: var(--paper); border: 2px solid var(--el); border-radius: 8px; padding: 6px 22px; margin-top: 8px; box-shadow: 3px 3px 0 var(--ink); transition: transform 0.12s ease, box-shadow 0.12s ease; }
+summary.build-btn::-webkit-details-marker { display: none; }
+summary.build-btn:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--ink); }
+summary.build-btn:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--ink); }
+details[open] > summary.build-btn { background: var(--panel); color: var(--el); }

@@ -2345,7 +2345,7 @@ function showMenu() {
   const solo = opts.mode !== 'pvp', online = opts.mode === 'online';
   showScreen(`<div class="narrow">
     <h1 class="title">Stick V1</h1>
-    <p class="lede">Ten elements. Build four moves yourself, describe one ultimate and Claude forges it. Fight two rounds with a half-time break to rework your moves. Head hits score 2, body hits score 1.</p>
+    <p class="lede">Ten elements. Build four moves and an ultimate yourself. Fight two rounds with a half-time break to rework your moves. Head hits score 2, body hits score 1.</p>
     <div class="opt"><span>Mode</span><div class="seg">${segButtons('mode', [['bot', 'Me vs bot'], ['online', 'Online with a code']])}</div></div>
     <div class="opt"><span>${solo ? 'Your element' : 'Player 1'}</span><div>${elButtons(0)}</div></div>
     ${online ? '' : solo ? `<div class="opt"><span>Bot element</span><span class="note">The bot picks its own element and moves at random every match.</span></div>` : `<div class="opt"><span>Player 2</span><div>${elButtons(1)}</div></div>`}
@@ -2371,13 +2371,7 @@ function showSettings() {
   const inp = (k, v, type = 'text', ph = '') => `<input type="${type}" data-setting="${k}" value="${esc(v)}" placeholder="${ph}" style="font:inherit;padding:6px;border:2px solid var(--ink);border-radius:6px;background:var(--panel);color:var(--ink);width:100%">`;
   showScreen(`<div class="narrow">
     <h2>Settings</h2>
-    <p class="note">Saved on this device only. Keys are never uploaded anywhere except the AI service you pick.</p>
-    <h3 style="margin-top:18px">Forging ultimates</h3>
-    <div class="opt"><span>Google AI Studio key</span>${inp('gkey', settings.gkey, 'password', 'AIza…')}</div>
-    <p class="note">${BUILT_IN_GEMINI_KEY ? 'This site already includes a key, so you can leave this empty. Add your own to use your own free quota instead.' : 'Free: sign in at aistudio.google.com, choose “Get API key” and paste it here.'}</p>
-    <div class="opt"><span>Gemini model</span>${inp('gmodel', settings.gmodel)}</div>
-    <div class="opt"><span>Anthropic key (optional)</span>${inp('key', settings.key, 'password', 'sk-ant-…')}</div>
-    <p class="note">Used only if there’s no Google key. Billed to your Anthropic account.</p>
+    <p class="note">Saved on this device only.</p>
     <h3 style="margin-top:18px">Online play</h3>
     <p class="note">Online games connect the two players directly. Leave this empty unless your network blocks direct connections and you run your own PeerJS server.</p>
     <div class="opt"><span>Custom PeerJS server</span>${inp('peerHost', settings.peerHost, 'text', 'leave empty to use the free public one')}</div>
@@ -2501,7 +2495,7 @@ function builderHTML(side, i) {
   const p = plan[side], m = p.result.moves[i];
   const s = m.stats;
   return `<details class="builder" data-open="${side}:${i}" ${p.open.has(i) ? 'open' : ''}>
-    <summary>${i === 4 ? 'Build the ultimate yourself' : 'Build this move yourself'}</summary>
+    <summary${i === 4 ? ' class="build-btn"' : ''}>${i === 4 ? 'Build' : 'Build this move yourself'}</summary>
     <div class="bgrid">
       <label class="wide">Name<input type="text" maxlength="26" value="${esc(m.name)}" data-edit="${side}:${i}:name"></label>
       <label>Type<select data-edit="${side}:${i}:type">${Object.keys(TYPE_BASE).map(t => `<option ${m.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
@@ -2562,7 +2556,7 @@ function prepColumn(side, half) {
     <div class="budget" data-budget="${side}">${budgetHTML(side)}</div>
     <div class="moves">
       ${[0, 1, 2, 3].map(i => `<article class="move"><div data-summary="${side}:${i}">${summaryHTML(side, i, half)}</div>${builderHTML(side, i)}</article>`).join('')}
-      <article class="move ult"><div data-summary="${side}:4">${summaryHTML(side, 4, half)}</div>${ultHTML(side)}${builderHTML(side, 4)}</article>
+      <article class="move ult"><div data-summary="${side}:4">${summaryHTML(side, 4, half)}</div>${builderHTML(side, 4)}</article>
     </div>
     <div data-msgs="${side}">${msgsHTML(side)}</div>
     <div class="edit-row adv">
@@ -2581,7 +2575,7 @@ function startRowHTML() {
       <span class="note">${!can ? 'Fix the errors in red first.' : meReady ? (oppReady ? 'Starting…' : 'Waiting for your opponent…') : oppReady ? 'Your opponent is ready.' : ''}</span>`;
   }
   return `<button class="cta" data-action="start" ${ok ? '' : 'disabled'}>${half ? 'Start round 2' : 'Start round 1'}</button>
-    ${ok ? '' : `<span class="note">${plan.some(p => p.busy) ? 'Waiting for Claude to finish.' : 'Fix the errors in red to start.'}</span>`}`;
+    ${ok ? '' : `<span class="note">${plan.some(p => p.busy) ? 'Please wait…' : 'Fix the errors in red to start.'}</span>`}`;
 }
 function showPrep() {
   const half = round === 1;
@@ -2591,7 +2585,7 @@ function showPrep() {
     <div class="prep-head">
       <div>
         <h2>${half ? 'Half time' : 'Prep time'}</h2>
-        <p>${half ? 'See what landed in round 1, then tune your moves or forge a new ultimate. Mana and the ultimate meter reset for round 2.' : 'Open “Build this move yourself” on any move to change it with sliders. Describe your ultimate and Claude forges it.'}</p>
+        <p>${half ? 'See what landed in round 1, then tune your moves or rebuild your ultimate. Mana and the ultimate meter reset for round 2.' : 'Open “Build this move yourself” on any move to change it with sliders. Press Build on your ultimate to shape it the same way.'}</p>
       </div>
       <button class="ghost" data-action="menu">${opts.mode === 'online' ? 'Leave game' : 'Back to menu'}</button>
     </div>
