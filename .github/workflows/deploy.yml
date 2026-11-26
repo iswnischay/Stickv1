@@ -1,4 +1,4 @@
-name: Build and deploy GitHub Pages
+name: Build and deploy
 
 on:
   push:
@@ -13,7 +13,66 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # 1. Online-play relay on Cloudflare Workers (free plan). Runs only on the default branch and only when
+  #    the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets exist; otherwise it is skipped
+  #    and the game falls back to direct peer-to-peer links.
+  deploy-relay:
+    if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    outputs:
+      url: ${{ steps.url.outputs.url }}
+    steps:
+      - name: Check for Cloudflare secrets
+        id: check
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$CF_TOKEN" ] && [ -n "$CF_ACCOUNT" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; else echo "ok=false" >> "$GITHUB_OUTPUT"; echo "::notice::Cloudflare secrets not set, skipping the relay."; fi
+
+      - name: Check out source
+        if: steps.check.outputs.ok == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        if: steps.check.outputs.ok == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install relay dependencies
+        if: steps.check.outputs.ok == 'true'
+        working-directory: server
+        run: npm ci
+
+      - name: Deploy relay to Cloudflare Workers
+        if: steps.check.outputs.ok == 'true'
+        id: wrangler
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: server
+          command: deploy
+
+      - name: Work out the relay address
+        if: steps.check.outputs.ok == 'true'
+        id: url
+        env:
+          DEPLOY_URL: ${{ steps.wrangler.outputs.deployment-url }}
+          DEPLOY_LOG: ${{ steps.wrangler.outputs.command-output }}
+        run: |
+          URL="$DEPLOY_URL"
+          if [ -z "$URL" ]; then URL=$(printf '%s' "$DEPLOY_LOG" | grep -oE 'https://[A-Za-z0-9.-]+\.workers\.dev' | head -1); fi
+          if [ -z "$URL" ]; then echo "::warning::Couldn't read the relay address from wrangler."; exit 0; fi
+          WSS=$(printf '%s' "$URL" | sed -E 's#^https://#wss://#; s#/+$##')
+          echo "Relay: $WSS"
+          echo "url=$WSS" >> "$GITHUB_OUTPUT"
+
+  # 2. Build the game. The relay address (if any) is baked in.
   build:
+    needs: deploy-relay
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -32,10 +91,8 @@ jobs:
         run: npm run build:pages
         env:
           VITE_BASE_PATH: /${{ github.event.repository.name }}/
-          # Repository secret named API_KEY (Settings > Secrets and variables > Actions).
-          # Pull requests never receive it, so their test builds simply have no shared key.
-          VITE_GEMINI_API_KEY: ${{ github.event_name != 'pull_request' && secrets.API_KEY || '' }}
-          # Optional TURN relay so players on different networks can always connect (see README).
+          RELAY_URL: ${{ needs.deploy-relay.outputs.url }}
+          # Optional TURN relay for the direct peer-to-peer fallback (see README).
           TURN_URL: ${{ github.event_name != 'pull_request' && secrets.TURN_URL || '' }}
           TURN_USERNAME: ${{ github.event_name != 'pull_request' && secrets.TURN_USERNAME || '' }}
           TURN_CREDENTIAL: ${{ github.event_name != 'pull_request' && secrets.TURN_CREDENTIAL || '' }}
@@ -45,8 +102,9 @@ jobs:
         with:
           path: dist
 
+  # 3. Publish to GitHub Pages (default branch only).
   deploy-pages:
-    if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: ${{ !cancelled() && needs.build.result == 'success' && github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     needs: build
     runs-on: ubuntu-latest
     permissions:

@@ -6,6 +6,7 @@ A stick-figure fighting game. Pick one of 10 elements, build four moves and an u
 
 - `index.html`, `src/` — the game (`src/game.js` is the code, `src/style.css` the styles)
 - `.github/workflows/deploy.yml` — builds and publishes to GitHub Pages automatically
+- `server/` — the online-play relay (Cloudflare Worker), deployed by the workflow
 - `desktop/` — optional Windows/Mac app wrapper
 
 ## Run it on your computer
@@ -38,21 +39,22 @@ Every push builds the game. Pushes to the default branch also publish it. Pull r
 
 ## Online play
 
-Players connect directly (WebRTC). The free public PeerJS service is only used to find each other by code, so no game server is needed. The game keeps retrying for up to 30 seconds and resends its state several times a second, so a slow or dropped message doesn't break the link.
+Online games go through a small relay server that lives in `server/` and runs free on Cloudflare Workers. Because it's normal web traffic, it works on any network: different Wi-Fi, mobile data, offices, schools. GitHub Actions deploys it for you.
 
-Once connected, players stay connected for as many matches as they like: either player can press **Play again** on the results screen. If the link drops mid-game, the game shows "Reconnecting…" and re-links automatically for up to 30 seconds.
+### Set up the relay (once, free)
 
-### Built-in relay for different networks (recommended)
+1. Sign up at dash.cloudflare.com (free plan).
+2. Open **Workers & Pages**. If asked, pick a `workers.dev` subdomain.
+3. Copy your **Account ID** (shown on the Workers & Pages page).
+4. **My Profile → API Tokens → Create Token →** template **Edit Cloudflare Workers** → create and copy the token.
+5. In this GitHub repo: **Settings → Secrets and variables → Actions**, add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+6. Push (or re-run the workflow). The workflow deploys the relay, then builds the game with the relay's address baked in.
 
-To make players on different networks connect reliably, give the site its own TURN relay through GitHub Actions secrets. Nobody then has to enter anything.
+Rooms hold exactly two players. Players stay connected across matches (either can press **Play again**), and a dropped link re-joins automatically. Two players fit easily in Cloudflare's free limits; if a daily limit were ever hit, the relay simply refuses new messages until midnight UTC, never a bill.
 
-1. Make a free account at metered.ca (Open Relay) and copy the TURN details it gives you.
-2. In the repository, open **Settings → Secrets and variables → Actions** and add three secrets: `TURN_URL` (one or more addresses separated by commas, for example `turn:global.relay.metered.ca:80,turns:global.relay.metered.ca:443?transport=tcp`), `TURN_USERNAME` and `TURN_CREDENTIAL`.
-3. Re-run the workflow. The relay is built into the published game.
+Without the Cloudflare secrets the game falls back to direct peer-to-peer links (WebRTC through the free PeerJS service), which work on most home networks but can be blocked elsewhere. For that fallback you can also add a TURN relay with the `TURN_URL`, `TURN_USERNAME` and `TURN_CREDENTIAL` secrets, or enter one under **Server settings** in the game.
 
-Like any key in a static site, these details end up in the page, so anyone who opens it could use your free relay quota. Use a free-tier account only.
-
-Most home networks connect fine. Some networks (mobile data, offices, schools, strict routers) block direct links. If two players on different networks still can't connect, add a TURN relay under **Server settings** on the online screen. Metered's Open Relay (metered.ca) has a free tier. Both players should enter the same TURN address, username and password. A custom PeerJS server can also be set there.
+To run the relay locally: `cd server && npm install && npm run dev`.
 
 ## Desktop app (optional)
 

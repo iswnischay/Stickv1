@@ -6,6 +6,7 @@ export default defineConfig({
   define: {
     __GEMINI_KEY__: JSON.stringify(process.env.VITE_GEMINI_API_KEY || ''),
     // optional TURN relay for online play, from the TURN_URL / TURN_USERNAME / TURN_CREDENTIAL repository secrets
+    __RELAY__: JSON.stringify(process.env.RELAY_URL || ''),
     __TURN__: JSON.stringify({ url: process.env.TURN_URL || '', username: process.env.TURN_USERNAME || '', credential: process.env.TURN_CREDENTIAL || '' })
   },
   build: { outDir: 'dist', emptyOutDir: true }

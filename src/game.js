@@ -1754,6 +1754,7 @@ const EL_INDEX = Object.fromEntries(EL_IDS.map((e, i) => [e, i]));
 const SHAPE_INDEX = Object.fromEntries(SHAPES.map((e, i) => [e, i]));
 const r1 = v => Math.round(v * 10) / 10;
 
+const BUILT_IN_RELAY = typeof __RELAY__ === 'string' ? __RELAY__ : '';
 function defaultServerUrl() {
   try { const s = localStorage.getItem('stick-server'); if (s) return s; } catch (e) {}
   if (location.protocol === 'http:' || location.protocol === 'https:') return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
@@ -1769,6 +1770,10 @@ async function openRoom(code) {
     const r = await lobby.join(name);
     return { kind: 'claude', presence: p => r.presence(p).catch(() => {}), leave: () => r.leave().catch(() => {}),
       peers: () => r.peers().map(p => ({ id: p.peer, me: p.sameTab, data: p.presence || {} })), connected: () => r.connected() };
+  }
+  if (BUILT_IN_RELAY && settings.net !== 'p2p-only') {
+    try { return await wsRoom(BUILT_IN_RELAY, name); }
+    catch (e) { if (e && e.code === 'full') throw e; /* relay unreachable: fall back to a direct link */ }
   }
   if (settings.net !== 'server' && window.Peer) return p2pRoom(code, NET.role);
   return wsRoom(defaultServerUrl(), name);
@@ -1855,24 +1860,46 @@ function p2pRoom(code, role) {
     peer.on('disconnected', () => { if (!destroyed) setTimeout(() => { try { if (!destroyed && peer.disconnected) peer.reconnect(); } catch (e) {} }, 800); });
   });
 }
+// Relay server (the Cloudflare Worker in server/). Messages go through the relay, so it works on any network.
+// The client picks its own id so a reconnect is recognised as the same player.
 function wsRoom(url, name) {
   return new Promise((resolve, reject) => {
-    let ws; try { ws = new WebSocket(url); } catch (e) { reject({ code: 'bad_url' }); return; }
-    const peers = new Map(); let myId = null, mine = {}, timer = null, open = false;
-    const api = { kind: 'ws', presence: patch => { for (const k in patch) { if (patch[k] === null) delete mine[k]; else mine[k] = patch[k]; } if (!timer) timer = setTimeout(flush, 33); },
-      peers: () => [...(myId ? [{ id: myId, me: true, data: mine }] : []), ...[...peers].map(([id, data]) => ({ id, me: false, data }))],
-      leave: () => { try { ws.close(); } catch (e) {} }, connected: () => open };
-    function flush() { timer = null; if (open) ws.send(JSON.stringify({ t: 'p', data: mine })); }
-    const fail = setTimeout(() => { if (!open) { try { ws.close(); } catch (e) {} reject({ code: 'no_server' }); } }, 6000);
-    ws.onopen = () => ws.send(JSON.stringify({ t: 'join', room: name }));
-    ws.onmessage = ev => {
-      let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
-      if (m.t === 'welcome') { myId = m.id; open = true; clearTimeout(fail); (m.peers || []).forEach(p => peers.set(p.id, p.data || {})); resolve(api); }
-      else if (m.t === 'p') peers.set(m.id, m.data || {});
-      else if (m.t === 'left') peers.delete(m.id);
-    };
-    ws.onerror = () => { if (!open) { clearTimeout(fail); reject({ code: 'no_server' }); } };
-    ws.onclose = () => { open = false; };
+    const myId = 'p' + Math.random().toString(36).slice(2, 10);
+    const peers = new Map(); let ws = null, mine = {}, timer = null, open = false, done = false, closed = false, retryT = null;
+    const api = { kind: 'ws',
+      presence: patch => { for (const k in patch) { if (patch[k] === null) delete mine[k]; else mine[k] = patch[k]; } if (!timer) timer = setTimeout(flush, 33); },
+      peers: () => [{ id: myId, me: true, data: mine }, ...[...peers].map(([id, data]) => ({ id, me: false, data }))],
+      leave: () => { closed = true; clearInterval(beat); clearTimeout(retryT); try { ws && ws.close(); } catch (e) {} }, connected: () => open };
+    function flush() { timer = null; if (open && ws && ws.readyState === 1) { try { ws.send(JSON.stringify({ t: 'p', data: mine })); } catch (e) {} } }
+    let lastHeard = Date.now(), beats = 0;
+    const beat = setInterval(() => {
+      if (!timer) flush();
+      if (++beats % 8 === 0 && open && ws && ws.readyState === 1) { try { ws.send('{"t":"ping"}'); } catch (e) {} }
+      // nothing heard for 6 s: the link is dead even if the browser hasn't noticed, so drop it and re-join
+      if (open && Date.now() - lastHeard > 6000) { open = false; const dead = ws; ws = null; try { dead.onclose = null; dead.close(); } catch (e) {} if (!closed) { clearTimeout(retryT); retryT = setTimeout(connect, 300); } }
+    }, 250);
+    const target = url.replace(/^http/, 'ws').replace(/\/+$/, '') + '/?room=' + encodeURIComponent(name);
+    const fail = setTimeout(() => { if (!done) { done = true; closed = true; clearInterval(beat); try { ws && ws.close(); } catch (e) {} reject({ code: 'no_server' }); } }, 10000);
+    function connect() {
+      try { ws = new WebSocket(target); } catch (e) { if (!done) { done = true; clearTimeout(fail); clearInterval(beat); reject({ code: 'bad_url' }); } return; }
+      ws.onopen = () => { lastHeard = Date.now(); try { ws.send(JSON.stringify({ t: 'join', room: name, id: myId })); } catch (e) {} };
+      ws.onmessage = ev => {
+        lastHeard = Date.now();
+        let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+        if (m.t === 'welcome') { open = true; peers.clear(); (m.peers || []).forEach(p => peers.set(p.id, p.data || {})); flush(); if (!done) { done = true; clearTimeout(fail); resolve(api); } }
+        else if (m.t === 'p') peers.set(m.id, m.data || {});
+        else if (m.t === 'left') peers.delete(m.id);
+        else if (m.t === 'full') { closed = true; if (!done) { done = true; clearTimeout(fail); clearInterval(beat); reject({ code: 'full' }); } else NET.full = true; }
+      };
+      ws.onerror = () => {};
+      ws.onclose = () => {
+        open = false;
+        if (closed) return;
+        if (!done) { retryT = setTimeout(connect, 1200); return; }
+        retryT = setTimeout(connect, 1000); // keep the same id and re-join: the game shows "Reconnecting…" meanwhile
+      };
+    }
+    connect();
   });
 }
 function netPresence(patch) {
@@ -1894,6 +1921,7 @@ async function netStart(role, code) {
   } catch (e) {
     if (e && e.code === 'code_taken' && role === 'host') { netStart('host', makeCode()); return; }
     NET.status = e && e.code === 'no_game' ? 'No game found with that code. Make sure your friend is still on the code screen, check the code and try again.'
+      : e && e.code === 'full' ? 'That game already has two players.'
       : e && e.code === 'blocked' ? 'Found the game, but your two networks won’t let a direct link through. Try again, switch one of you to another network (for example a phone hotspot), or add a TURN relay under Server settings.'
       : e && e.code === 'no_signal' ? 'Couldn’t reach the matchmaking service. Check your internet connection, turn off any VPN or ad blocker for this page, and try again.'
       : e && e.code === 'no_server' ? `Couldn’t reach the game server at ${defaultServerUrl()}. Check the address in Settings, or start the server.`
@@ -1906,7 +1934,7 @@ async function netStart(role, code) {
 function netStop() {
   if (NET.room) NET.room.leave();
   NET.lastSnapObj = null; NET.oppPlanKey = '';
-  NET.reconnecting = false; NET.lastAgain = undefined;
+  NET.reconnecting = false; NET.lastAgain = undefined; NET.slowNote = false;
   Object.assign(NET, { on: false, room: null, opp: null, role: null, snap: null, hostPlan: null, oppPlan: null, ready: 0, oppReady: 0, events: [], seenEv: 0, evId: 0, planKey: '', presKey: '', lastInKey: '' });
 }
 function compactPlan(side) {
@@ -1945,6 +1973,7 @@ function netTick(dt) {
   if (state === 'lobby') {
     if (NET.full) { NET.status = 'That game already has two players.'; showLobby(); netStop(); return; }
     if (o) { onlineSetup(); return; }
+    if (NET.role === 'guest' && !NET.slowNote && now - NET.connectedAt > 12000) { NET.slowNote = true; NET.status = 'No host has joined this code yet. Check the code with your friend. This screen keeps waiting.'; showLobby(); }
     return;
   }
   if (!o) return;
