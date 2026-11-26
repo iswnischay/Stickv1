@@ -1660,6 +1660,12 @@ function drawHUD() {
   ctx.fillText(`Round ${round + 1} of 2`, W / 2, 64);
 }
 
+function drawReconnect() {
+  if (!NET.on || !NET.reconnecting) return;
+  ctx.save(); ctx.globalAlpha = 0.9; ctx.fillStyle = C.ink; roundRect(W / 2 - 170, 84, 340, 40, 20); ctx.fill();
+  ctx.fillStyle = C.paper; ctx.font = '600 17px "Bricolage Grotesque", system-ui, sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(`Reconnecting to your opponent${'.'.repeat(1 + Math.floor(clock * 2) % 3)}`, W / 2, 110); ctx.restore();
+}
 function drawBanner() {
   let txt = null;
   if (state === 'countdown') txt = String(Math.ceil(countdown / 0.8));
@@ -1713,6 +1719,7 @@ function render() {
   ctx.restore();
   drawHUD();
   drawBanner();
+  drawReconnect();
   const aiming = fighting() && fighters.some(f => !f.isBot && f.aimMode === 'mouse');
   cv.classList.toggle('aiming', aiming);
 }
@@ -1773,6 +1780,9 @@ function iceServers() {
     { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] },
     { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' }
   ];
+  // a relay baked in at build time from GitHub Actions secrets (TURN_URL, TURN_USERNAME, TURN_CREDENTIAL)
+  const B = typeof __TURN__ === 'object' && __TURN__ ? __TURN__ : null;
+  if (B && B.url) list.unshift({ urls: B.url.split(/[\s,]+/).filter(Boolean).map(u => /^turns?:/.test(u) ? u : 'turn:' + u), username: B.username || undefined, credential: B.credential || undefined });
   if (settings.turnUrl) {
     const urls = settings.turnUrl.split(/[\s,]+/).filter(Boolean).map(u => /^turns?:/.test(u) ? u : 'turn:' + u);
     if (urls.length) list.unshift({ urls, username: settings.turnUser || undefined, credential: settings.turnPass || undefined });
@@ -1799,7 +1809,7 @@ function p2pRoom(code, role) {
     const api = { kind: 'p2p',
       presence: patch => { for (const k in patch) { if (patch[k] === null) delete mine[k]; else mine[k] = patch[k]; } if (!timer) timer = setTimeout(flush, 33); },
       peers: () => [{ id: myId, me: true, data: mine }, ...[...conns].filter(([, c]) => c.open).map(([pid, c]) => ({ id: pid, me: false, data: c.data }))],
-      leave: () => { destroyed = true; clearInterval(beat); clearTimeout(retryT); clearTimeout(quickT); try { peer.destroy(); } catch (e) {} }, connected: () => open };
+      leave: () => { destroyed = true; clearInterval(beat); clearTimeout(retryT); clearTimeout(quickT); clearTimeout(relinkT); try { peer.destroy(); } catch (e) {} }, connected: () => open };
     function flush() { timer = null; const msg = JSON.stringify(mine); for (const c of conns.values()) if (c.open) { try { c.conn.send(msg); } catch (e) {} } }
     const beat = setInterval(() => { if (!timer) flush(); }, 250);
     const finish = (ok, err) => {
@@ -1811,13 +1821,16 @@ function p2pRoom(code, role) {
       const rec = { conn, data: {}, open: false }; conns.set(conn.peer, rec);
       conn.on('open', () => { rec.open = true; flush(); if (role === 'guest') finish(true); });
       conn.on('data', d => { try { const v = typeof d === 'string' ? JSON.parse(d) : d; if (v && typeof v === 'object') rec.data = v; } catch (e) {} });
-      conn.on('close', () => { if (conns.get(conn.peer) === rec) conns.delete(conn.peer); });
+      conn.on('close', () => { if (conns.get(conn.peer) === rec) { conns.delete(conn.peer); if (role === 'guest' && done && open && !destroyed) relink(); } });
       conn.on('error', () => {});
       // spot networks that can't reach each other instead of waiting silently
       const watch = () => { const pc = conn.peerConnection; if (!pc) { setTimeout(watch, 100); return; }
-        pc.addEventListener('iceconnectionstatechange', () => { if (pc.iceConnectionState === 'failed') { iceFailed = true; if (role === 'guest' && !done) retry(); } }); };
+        pc.addEventListener('iceconnectionstatechange', () => { if (pc.iceConnectionState === 'failed') { iceFailed = true; if (role === 'guest') { if (!done) retry(); else { try { conn.close(); } catch (e) {} relink(); } } } }); };
       watch();
     }
+    // after the game has started, a dropped link is re-opened to the same host (the host keeps the same guest id)
+    let relinkT = null;
+    function relink() { if (relinkT || destroyed) return; relinkT = setTimeout(() => { relinkT = null; if (destroyed || [...conns.values()].some(c => c.open)) return; if (peer.disconnected) { try { peer.reconnect(); } catch (e) {} } try { connectToHost(); } catch (e) {} relink(); }, 2000); }
     function connectToHost() {
       tries++;
       attach(peer.connect(hostId, { reliable: true, serialization: 'raw' }));
@@ -1833,7 +1846,7 @@ function p2pRoom(code, role) {
     peer.on('connection', conn => { if (role === 'host') attach(conn); });
     peer.on('error', e => {
       const t = e && e.type;
-      if (t === 'peer-unavailable') { if (role === 'guest') retry(); return; }
+      if (t === 'peer-unavailable') { if (role === 'guest' && !done) retry(); return; }
       if (t === 'unavailable-id') { finish(false, { code: 'code_taken' }); return; }
       if (!done && (t === 'browser-incompatible' || t === 'ssl-unavailable')) { finish(false, { code: 'no_signal' }); return; }
       // network / server hiccups: keep trying until the timeout
@@ -1893,6 +1906,7 @@ async function netStart(role, code) {
 function netStop() {
   if (NET.room) NET.room.leave();
   NET.lastSnapObj = null; NET.oppPlanKey = '';
+  NET.reconnecting = false; NET.lastAgain = undefined;
   Object.assign(NET, { on: false, room: null, opp: null, role: null, snap: null, hostPlan: null, oppPlan: null, ready: 0, oppReady: 0, events: [], seenEv: 0, evId: 0, planKey: '', presKey: '', lastInKey: '' });
 }
 function compactPlan(side) {
@@ -1925,7 +1939,9 @@ function netTick(dt) {
   const o = oppPeer(), now = performance.now();
   if (o) NET.oppLastSeen = now;
   const inMatch = !['lobby', 'menu', 'controls', 'settings'].includes(state);
-  if (inMatch && !NET.lost && now - NET.oppLastSeen > 7000 && now - NET.connectedAt > 7000) { NET.lost = true; showLost(); return; }
+  const gone = now - NET.oppLastSeen, settled = now - NET.connectedAt > 7000;
+  NET.reconnecting = inMatch && settled && gone > 2500 && !NET.lost;
+  if (inMatch && !NET.lost && settled && gone > 30000) { NET.lost = true; showLost(); return; }
   if (state === 'lobby') {
     if (NET.full) { NET.status = 'That game already has two players.'; showLobby(); netStop(); return; }
     if (o) { onlineSetup(); return; }
@@ -1946,7 +1962,10 @@ function netTick(dt) {
   if (NET.role === 'host') {
     if ((state === 'prep' || state === 'half') && NET.ready === round + 1 && NET.oppReady === round + 1 && plan[0].result.valid && !plan[0].busy) startOnlineRound();
     if (fighting() || state === 'timeup') { NET.snapT = (NET.snapT || 0) - dt; if (NET.snapT <= 0) { NET.snapT = 0.033; netPresence({ snap: buildSnap() }); } }
-    else if (state === 'results') { NET.snapT = (NET.snapT || 0) - dt; if (NET.snapT <= 0) { NET.snapT = 0.5; netPresence({ snap: buildSnap() }); } }
+    else if (state === 'results') {
+      NET.snapT = (NET.snapT || 0) - dt; if (NET.snapT <= 0) { NET.snapT = 0.5; netPresence({ snap: buildSnap() }); }
+      if (d.again && d.again !== NET.lastAgain) { NET.lastAgain = d.again; round = 0; fighters.forEach(f => { f.score = 0; f.roundScore = [0, 0]; f.heads = 0; f.bodies = 0; f.bonus = 0; }); NET.ready = 0; netPresence({ ready: 0 }); showPrep(); }
+    }
   } else {
     if (d.plan) NET.hostPlan = d.plan;
     if (d.snap && d.snap !== NET.lastSnapObj) { NET.lastSnapObj = d.snap; guestApply(d.snap); }
@@ -2025,7 +2044,7 @@ function guestApply(s) {
   if (st === 'prep' || st === 'half') {
     const rd = Number(s.rd) || 0;
     if (Array.isArray(s.sc) && fighters.length) s.sc.forEach((v, i) => { if (fighters[i] && Array.isArray(v)) { fighters[i].score = v[0] | 0; fighters[i].roundScore = [v[1] | 0, v[2] | 0]; } });
-    if (state !== st || round !== rd) { round = rd; NET.ready = 0; netPresence({ ready: 0 }); if (st === 'prep' && fighters.length) fighters.forEach(f => { f.score = 0; f.roundScore = [0, 0]; f.heads = 0; f.bodies = 0; f.bonus = 0; }); showPrep(); }
+    if (state !== st || round !== rd) { round = rd; NET.ready = 0; netPresence({ ready: 0, again: null }); if (st === 'prep' && fighters.length) fighters.forEach(f => { f.score = 0; f.roundScore = [0, 0]; f.heads = 0; f.bodies = 0; f.bonus = 0; }); showPrep(); }
     return;
   }
   if (st === 'countdown' || st === 'fight' || st === 'timeup') {
@@ -2708,8 +2727,8 @@ function showResults() {
       ${row('Points from reflects and deflects', f => f.bonus)}
     </table>
     <div class="go">
-      ${opts.mode === 'online' && NET.role !== 'host' ? '<span class="note">The host can start a rematch.</span>' : '<button class="cta" data-action="rematch">Rematch with these moves</button>'}
-      <button data-action="menu">Back to menu</button>
+      ${opts.mode === 'online' && NET.role !== 'host' ? (NET.pres.again ? '<span class="note">Waiting for the host to start the rematch…</span>' : '<button class="cta" data-action="ask-rematch">Play again</button>') : `<button class="cta" data-action="rematch">${opts.mode === 'online' ? 'Play again' : 'Rematch with these moves'}</button>`}
+      <button data-action="menu">${opts.mode === 'online' ? 'Leave game' : 'Back to menu'}</button>
     </div>
   </div>`);
 }
@@ -2791,8 +2810,9 @@ screenEl.addEventListener('click', e => {
       showPrep(); break;
     }
     case 'reset': { if (plan[side].ctl) plan[side].ctl.abort(); plan[side] = newPlan(plan[side].element); showPrep(); break; }
+    case 'ask-rematch': netPresence({ again: Date.now() }); showResults(); break;
     case 'rematch': {
-      if (opts.mode === 'online') { round = 0; fighters.forEach(f => { f.score = 0; f.roundScore = [0, 0]; f.heads = 0; f.bodies = 0; f.bonus = 0; }); NET.ready = 0; netPresence({ ready: 0 }); showPrep(); break; }
+      if (opts.mode === 'online') { const od = (oppPeer() || {}).data || {}; NET.lastAgain = od.again; round = 0; fighters.forEach(f => { f.score = 0; f.roundScore = [0, 0]; f.heads = 0; f.bodies = 0; f.bonus = 0; }); NET.ready = 0; netPresence({ ready: 0 }); showPrep(); break; }
       round = 0;
       if (opts.mode === 'bot') { sideEls[1] = randomOther(plan[0].element); plan[1] = botPlan(sideEls[1], plan[0]); }
       fighters = plan.map((p, i) => makeFighter(i, p.element));

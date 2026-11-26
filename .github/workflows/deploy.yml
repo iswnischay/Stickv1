@@ -35,6 +35,10 @@ jobs:
           # Repository secret named API_KEY (Settings > Secrets and variables > Actions).
           # Pull requests never receive it, so their test builds simply have no shared key.
           VITE_GEMINI_API_KEY: ${{ github.event_name != 'pull_request' && secrets.API_KEY || '' }}
+          # Optional TURN relay so players on different networks can always connect (see README).
+          TURN_URL: ${{ github.event_name != 'pull_request' && secrets.TURN_URL || '' }}
+          TURN_USERNAME: ${{ github.event_name != 'pull_request' && secrets.TURN_USERNAME || '' }}
+          TURN_CREDENTIAL: ${{ github.event_name != 'pull_request' && secrets.TURN_CREDENTIAL || '' }}
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4

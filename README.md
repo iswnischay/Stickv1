@@ -40,6 +40,18 @@ Every push builds the game. Pushes to the default branch also publish it. Pull r
 
 Players connect directly (WebRTC). The free public PeerJS service is only used to find each other by code, so no game server is needed. The game keeps retrying for up to 30 seconds and resends its state several times a second, so a slow or dropped message doesn't break the link.
 
+Once connected, players stay connected for as many matches as they like: either player can press **Play again** on the results screen. If the link drops mid-game, the game shows "Reconnecting…" and re-links automatically for up to 30 seconds.
+
+### Built-in relay for different networks (recommended)
+
+To make players on different networks connect reliably, give the site its own TURN relay through GitHub Actions secrets. Nobody then has to enter anything.
+
+1. Make a free account at metered.ca (Open Relay) and copy the TURN details it gives you.
+2. In the repository, open **Settings → Secrets and variables → Actions** and add three secrets: `TURN_URL` (one or more addresses separated by commas, for example `turn:global.relay.metered.ca:80,turns:global.relay.metered.ca:443?transport=tcp`), `TURN_USERNAME` and `TURN_CREDENTIAL`.
+3. Re-run the workflow. The relay is built into the published game.
+
+Like any key in a static site, these details end up in the page, so anyone who opens it could use your free relay quota. Use a free-tier account only.
+
 Most home networks connect fine. Some networks (mobile data, offices, schools, strict routers) block direct links. If two players on different networks still can't connect, add a TURN relay under **Server settings** on the online screen. Metered's Open Relay (metered.ca) has a free tier. Both players should enter the same TURN address, username and password. A custom PeerJS server can also be set there.
 
 ## Desktop app (optional)
