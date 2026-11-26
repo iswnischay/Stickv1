@@ -1766,8 +1766,21 @@ async function openRoom(code) {
   if (settings.net !== 'server' && window.Peer) return p2pRoom(code, NET.role);
   return wsRoom(defaultServerUrl(), name);
 }
+// ICE servers: STUN finds each player's public address (enough for most home networks); TURN relays the game when
+// a network blocks direct links (mobile data, offices, schools). PeerJS's free relay is tried, plus your own if set.
+function iceServers() {
+  const list = [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] },
+    { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' }
+  ];
+  if (settings.turnUrl) {
+    const urls = settings.turnUrl.split(/[\s,]+/).filter(Boolean).map(u => /^turns?:/.test(u) ? u : 'turn:' + u);
+    if (urls.length) list.unshift({ urls, username: settings.turnUser || undefined, credential: settings.turnPass || undefined });
+  }
+  return list;
+}
 function peerOptions() {
-  const o = { debug: 0 };
+  const o = { debug: 0, config: { iceServers: iceServers(), sdpSemantics: 'unified-plan' } };
   if (settings.peerHost) {
     const m = settings.peerHost.match(/^(?:(wss?|https?):\/\/)?([^/:]+)(?::(\d+))?(\/.*)?$/);
     if (m) { o.host = m[2]; if (m[3]) o.port = Number(m[3]); o.path = m[4] || '/'; o.secure = m[1] ? (m[1] === 'wss' || m[1] === 'https') : location.protocol === 'https:'; }
@@ -1775,30 +1788,58 @@ function peerOptions() {
   return o;
 }
 // Peer-to-peer: the host claims an id made from the code and the guest connects to it, so no game server is needed.
+// Each side keeps one "presence" object and sends the whole thing on every change and on a steady heartbeat,
+// so a dropped or late message can never leave the other side stuck.
 function p2pRoom(code, role) {
   return new Promise((resolve, reject) => {
     const hostId = 'stickv1-' + code.toLowerCase();
     let peer;
     try { peer = role === 'host' ? new window.Peer(hostId, peerOptions()) : new window.Peer(peerOptions()); } catch (e) { reject({ code: 'no_signal' }); return; }
-    const conns = new Map(); let mine = {}, timer = null, open = false, myId = null, done = false;
+    const conns = new Map(); let mine = {}, timer = null, open = false, myId = null, done = false, destroyed = false, iceFailed = false, tries = 0, retryT = null, quickT = null;
     const api = { kind: 'p2p',
       presence: patch => { for (const k in patch) { if (patch[k] === null) delete mine[k]; else mine[k] = patch[k]; } if (!timer) timer = setTimeout(flush, 33); },
       peers: () => [{ id: myId, me: true, data: mine }, ...[...conns].filter(([, c]) => c.open).map(([pid, c]) => ({ id: pid, me: false, data: c.data }))],
-      leave: () => { try { peer.destroy(); } catch (e) {} }, connected: () => open };
+      leave: () => { destroyed = true; clearInterval(beat); clearTimeout(retryT); clearTimeout(quickT); try { peer.destroy(); } catch (e) {} }, connected: () => open };
     function flush() { timer = null; const msg = JSON.stringify(mine); for (const c of conns.values()) if (c.open) { try { c.conn.send(msg); } catch (e) {} } }
-    const finish = (ok, err) => { if (done) return; done = true; clearTimeout(fail); if (ok) { open = true; resolve(api); } else { try { peer.destroy(); } catch (e) {} reject(err); } };
+    const beat = setInterval(() => { if (!timer) flush(); }, 250);
+    const finish = (ok, err) => {
+      if (done) return; done = true; clearTimeout(fail); clearTimeout(retryT); clearTimeout(quickT);
+      if (ok) { open = true; resolve(api); } else { destroyed = true; clearInterval(beat); try { peer.destroy(); } catch (e) {} reject(err); }
+    };
     function attach(conn) {
+      const old = conns.get(conn.peer); if (old && old.conn !== conn) { try { old.conn.close(); } catch (e) {} }
       const rec = { conn, data: {}, open: false }; conns.set(conn.peer, rec);
-      conn.on('open', () => { rec.open = true; try { conn.send(JSON.stringify(mine)); } catch (e) {} if (role === 'guest') finish(true); });
+      conn.on('open', () => { rec.open = true; flush(); if (role === 'guest') finish(true); });
       conn.on('data', d => { try { const v = typeof d === 'string' ? JSON.parse(d) : d; if (v && typeof v === 'object') rec.data = v; } catch (e) {} });
-      conn.on('close', () => conns.delete(conn.peer));
+      conn.on('close', () => { if (conns.get(conn.peer) === rec) conns.delete(conn.peer); });
       conn.on('error', () => {});
+      // spot networks that can't reach each other instead of waiting silently
+      const watch = () => { const pc = conn.peerConnection; if (!pc) { setTimeout(watch, 100); return; }
+        pc.addEventListener('iceconnectionstatechange', () => { if (pc.iceConnectionState === 'failed') { iceFailed = true; if (role === 'guest' && !done) retry(); } }); };
+      watch();
     }
-    const fail = setTimeout(() => finish(false, { code: role === 'host' ? 'no_signal' : 'no_game' }), 12000);
-    peer.on('open', pid => { myId = pid; if (role === 'host') finish(true); else attach(peer.connect(hostId, { reliable: false, serialization: 'raw' })); });
+    function connectToHost() {
+      tries++;
+      attach(peer.connect(hostId, { reliable: true, serialization: 'raw' }));
+    }
+    // the host may still be registering, or the first attempt may stall: try again a few times
+    function retry() { if (done || destroyed || quickT) return; quickT = setTimeout(() => { quickT = null; if (!done && !destroyed && peer.open && tries < 8) connectToHost(); }, 1500); }
+    const fail = setTimeout(() => finish(false, { code: role === 'host' ? 'no_signal' : iceFailed ? 'blocked' : tries > 0 && peer.open ? 'no_game' : 'no_signal' }), role === 'host' ? 15000 : 30000);
+    peer.on('open', pid => {
+      myId = pid;
+      if (role === 'host') finish(true);
+      else { connectToHost(); const again = () => { if (!done && !destroyed) { if (tries < 4 && ![...conns.values()].some(c => c.open)) connectToHost(); retryT = setTimeout(again, 8000); } }; retryT = setTimeout(again, 8000); }
+    });
     peer.on('connection', conn => { if (role === 'host') attach(conn); });
-    peer.on('error', e => { const t = e && e.type; if (!done) finish(false, { code: t === 'unavailable-id' ? 'code_taken' : t === 'peer-unavailable' ? 'no_game' : 'no_signal' }); });
-    peer.on('disconnected', () => { if (open) { try { peer.reconnect(); } catch (e) {} } });
+    peer.on('error', e => {
+      const t = e && e.type;
+      if (t === 'peer-unavailable') { if (role === 'guest') retry(); return; }
+      if (t === 'unavailable-id') { finish(false, { code: 'code_taken' }); return; }
+      if (!done && (t === 'browser-incompatible' || t === 'ssl-unavailable')) { finish(false, { code: 'no_signal' }); return; }
+      // network / server hiccups: keep trying until the timeout
+    });
+    // the matchmaking link can drop while players are idle; get it back so new guests can still find the host
+    peer.on('disconnected', () => { if (!destroyed) setTimeout(() => { try { if (!destroyed && peer.disconnected) peer.reconnect(); } catch (e) {} }, 800); });
   });
 }
 function wsRoom(url, name) {
@@ -1839,8 +1880,9 @@ async function netStart(role, code) {
     NET.status = role === 'host' ? 'Waiting for your friend to join…' : 'Looking for the host…';
   } catch (e) {
     if (e && e.code === 'code_taken' && role === 'host') { netStart('host', makeCode()); return; }
-    NET.status = e && e.code === 'no_game' ? 'No game found with that code. Check it with your friend and try again.'
-      : e && e.code === 'no_signal' ? 'Couldn’t reach the matchmaking service. Check your internet connection and try again.'
+    NET.status = e && e.code === 'no_game' ? 'No game found with that code. Make sure your friend is still on the code screen, check the code and try again.'
+      : e && e.code === 'blocked' ? 'Found the game, but your two networks won’t let a direct link through. Try again, switch one of you to another network (for example a phone hotspot), or add a TURN relay under Server settings.'
+      : e && e.code === 'no_signal' ? 'Couldn’t reach the matchmaking service. Check your internet connection, turn off any VPN or ad blocker for this page, and try again.'
       : e && e.code === 'no_server' ? `Couldn’t reach the game server at ${defaultServerUrl()}. Check the address in Settings, or start the server.`
       : e && e.code === 'no_room' ? 'Online play isn’t available in this view. Open the game in Claude, or use the desktop version with a server.'
       : 'Couldn’t join that game. Check the code and try again.';
@@ -2072,7 +2114,7 @@ try {
   const g = k => localStorage.getItem(k);
   settings.key = g('stick-api-key') || ''; settings.model = g('stick-model') || settings.model;
   settings.gkey = g('stick-gemini-key') || ''; settings.gmodel = g('stick-gemini-model') || settings.gmodel;
-  settings.net = 'p2p'; settings.peerHost = g('stick-peer-host') || '';
+  settings.net = 'p2p'; settings.peerHost = g('stick-peer-host') || ''; settings.turnUrl = g('stick-turn-url') || ''; settings.turnUser = g('stick-turn-user') || ''; settings.turnPass = g('stick-turn-pass') || '';
 } catch (e) {}
 function parseJsonLoose(t) {
   const m = t.match(/```(?:json)?\s*([\s\S]*?)```/); let body = m ? m[1] : t;
@@ -2375,6 +2417,10 @@ function showSettings() {
     <h3 style="margin-top:18px">Online play</h3>
     <p class="note">Online games connect the two players directly. Leave this empty unless your network blocks direct connections and you run your own PeerJS server.</p>
     <div class="opt"><span>Custom PeerJS server</span>${inp('peerHost', settings.peerHost, 'text', 'leave empty to use the free public one')}</div>
+    <p class="note">If you and your friend can’t connect from different networks, add a TURN relay. A free one: create an account at metered.ca (Open Relay), then paste its TURN address, username and password here. Both players should add the same one.</p>
+    <div class="opt"><span>TURN address</span>${inp('turnUrl', settings.turnUrl, 'text', 'turn:example.com:3478')}</div>
+    <div class="opt"><span>TURN username</span>${inp('turnUser', settings.turnUser)}</div>
+    <div class="opt"><span>TURN password</span>${inp('turnPass', settings.turnPass, 'password')}</div>
     <div class="go"><button class="cta" data-action="save-settings">Save</button><button data-action="menu">Back</button></div>
   </div>`);
 }
@@ -2717,8 +2763,8 @@ screenEl.addEventListener('click', e => {
     case 'settings': showSettings(); break;
     case 'save-settings': {
       const v = k => (screenEl.querySelector(`[data-setting="${k}"]`) || {}).value || '';
-      settings.key = v('key').trim(); settings.gkey = v('gkey').trim(); settings.gmodel = v('gmodel').trim() || 'gemini-3.5-flash-lite'; settings.peerHost = v('peerHost').trim();
-      try { const S = (k, x) => localStorage.setItem(k, x); S('stick-api-key', settings.key); S('stick-gemini-key', settings.gkey); S('stick-gemini-model', settings.gmodel); S('stick-net', 'p2p'); S('stick-peer-host', settings.peerHost); } catch (e) {}
+      settings.key = v('key').trim(); settings.gkey = v('gkey').trim(); settings.gmodel = v('gmodel').trim() || 'gemini-3.5-flash-lite'; settings.peerHost = v('peerHost').trim(); settings.turnUrl = v('turnUrl').trim(); settings.turnUser = v('turnUser').trim(); settings.turnPass = v('turnPass').trim();
+      try { const S = (k, x) => localStorage.setItem(k, x); S('stick-api-key', settings.key); S('stick-gemini-key', settings.gkey); S('stick-gemini-model', settings.gmodel); S('stick-net', 'p2p'); S('stick-peer-host', settings.peerHost); S('stick-turn-url', settings.turnUrl); S('stick-turn-user', settings.turnUser); S('stick-turn-pass', settings.turnPass); } catch (e) {}
       initSample(); showMenu(); break;
     }
     case 'rebind-pad': capture = { kind: 'pad', action: btn.dataset.bind }; showControls(); break;

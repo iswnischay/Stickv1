@@ -38,7 +38,9 @@ Every push builds the game. Pushes to the default branch also publish it. Pull r
 
 ## Online play
 
-Players connect to each other directly (WebRTC), using the free public PeerJS service only to find each other by code, so no game server is needed. A few strict networks (some offices and schools) block direct connections; for those, a custom PeerJS server can be entered under **Settings**.
+Players connect directly (WebRTC). The free public PeerJS service is only used to find each other by code, so no game server is needed. The game keeps retrying for up to 30 seconds and resends its state several times a second, so a slow or dropped message doesn't break the link.
+
+Most home networks connect fine. Some networks (mobile data, offices, schools, strict routers) block direct links. If two players on different networks still can't connect, add a TURN relay under **Server settings** on the online screen. Metered's Open Relay (metered.ca) has a free tier. Both players should enter the same TURN address, username and password. A custom PeerJS server can also be set there.
 
 ## Desktop app (optional)
 
