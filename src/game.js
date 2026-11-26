@@ -1812,7 +1812,7 @@ function p2pRoom(code, role) {
     try { peer = role === 'host' ? new window.Peer(hostId, peerOptions()) : new window.Peer(peerOptions()); } catch (e) { reject({ code: 'no_signal' }); return; }
     const conns = new Map(); let mine = {}, timer = null, open = false, myId = null, done = false, destroyed = false, iceFailed = false, tries = 0, retryT = null, quickT = null;
     const api = { kind: 'p2p',
-      presence: patch => { for (const k in patch) { if (patch[k] === null) delete mine[k]; else mine[k] = patch[k]; } if (!timer) timer = setTimeout(flush, 33); },
+      presence: (patch, urgent) => { for (const k in patch) { if (patch[k] === null) delete mine[k]; else mine[k] = patch[k]; } if (urgent) { clearTimeout(timer); flush(); } else if (!timer) timer = setTimeout(flush, 33); },
       peers: () => [{ id: myId, me: true, data: mine }, ...[...conns].filter(([, c]) => c.open).map(([pid, c]) => ({ id: pid, me: false, data: c.data }))],
       leave: () => { destroyed = true; clearInterval(beat); clearTimeout(retryT); clearTimeout(quickT); clearTimeout(relinkT); try { peer.destroy(); } catch (e) {} }, connected: () => open };
     function flush() { timer = null; const msg = JSON.stringify(mine); for (const c of conns.values()) if (c.open) { try { c.conn.send(msg); } catch (e) {} } }
@@ -1867,7 +1867,7 @@ function wsRoom(url, name) {
     const myId = 'p' + Math.random().toString(36).slice(2, 10);
     const peers = new Map(); let ws = null, mine = {}, timer = null, open = false, done = false, closed = false, retryT = null;
     const api = { kind: 'ws',
-      presence: patch => { for (const k in patch) { if (patch[k] === null) delete mine[k]; else mine[k] = patch[k]; } if (!timer) timer = setTimeout(flush, 33); },
+      presence: (patch, urgent) => { for (const k in patch) { if (patch[k] === null) delete mine[k]; else mine[k] = patch[k]; } if (urgent) { clearTimeout(timer); flush(); } else if (!timer) timer = setTimeout(flush, 33); },
       peers: () => [{ id: myId, me: true, data: mine }, ...[...peers].map(([id, data]) => ({ id, me: false, data }))],
       leave: () => { closed = true; clearInterval(beat); clearTimeout(retryT); try { ws && ws.close(); } catch (e) {} }, connected: () => open };
     function flush() { timer = null; if (open && ws && ws.readyState === 1) { try { ws.send(JSON.stringify({ t: 'p', data: mine })); } catch (e) {} } }
@@ -1902,11 +1902,11 @@ function wsRoom(url, name) {
     connect();
   });
 }
-function netPresence(patch) {
+function netPresence(patch, urgent) {
   if (!NET.room) return;
   Object.assign(NET.pres, patch);
   for (const k in patch) if (patch[k] === null) delete NET.pres[k];
-  NET.room.presence(patch);
+  NET.room.presence(patch, urgent);
 }
 async function netStart(role, code) {
   netStop();
@@ -1990,7 +1990,7 @@ function netTick(dt) {
   }
   if (NET.role === 'host') {
     if ((state === 'prep' || state === 'half') && NET.ready === round + 1 && NET.oppReady === round + 1 && plan[0].result.valid && !plan[0].busy) startOnlineRound();
-    if (fighting() || state === 'timeup') { NET.snapT = (NET.snapT || 0) - dt; if (NET.snapT <= 0) { NET.snapT = 0.033; netPresence({ snap: buildSnap() }); } }
+    if (fighting() || state === 'timeup') { NET.snapT = (NET.snapT || 0) - dt; if (NET.snapT <= 0) { NET.snapT = 0.033; netPresence({ snap: buildSnap() }, true); } }
     else if (state === 'results') {
       NET.snapT = (NET.snapT || 0) - dt; if (NET.snapT <= 0) { NET.snapT = 0.5; netPresence({ snap: buildSnap() }); }
       if (d.again && d.again !== NET.lastAgain) { NET.lastAgain = d.again; round = 0; fighters.forEach(f => { f.score = 0; f.roundScore = [0, 0]; f.heads = 0; f.bodies = 0; f.bonus = 0; }); NET.ready = 0; netPresence({ ready: 0 }); showPrep(); }
@@ -2033,8 +2033,9 @@ function netRemoteInput(f) {
   const casts = [];
   const m = Array.isArray(d.m) ? d.m : [0, 0, 0, 0, 0];
   f.rm = f.rm || [0, 0, 0, 0, 0];
-  for (let k = 0; k < 5; k++) { const v = Number(m[k]) || 0; if (v > f.rm[k]) casts.push(k); f.rm[k] = Math.max(f.rm[k], v); }
-  const j = Number(d.j) || 0, wantJump = j > (f.rj || 0); f.rj = Math.max(f.rj || 0, j);
+  // presses are counters: a higher number means a new press. If a counter ever goes backwards, follow it instead of waiting.
+  for (let k = 0; k < 5; k++) { const v = Number(m[k]) || 0; if (v > f.rm[k]) casts.push(k); f.rm[k] = v; }
+  const j = Number(d.j) || 0, wantJump = j > (f.rj || 0); f.rj = j;
   f.remoteAim = Array.isArray(d.s) ? { kind: 'stick', x: Number(d.s[0]) || 0, y: Number(d.s[1]) || 0 } : Array.isArray(d.a) ? { kind: 'mouse', x: Number(d.a[0]) || 0, y: Number(d.a[1]) || 0 } : null;
   return { ax: clamp(Number(d.ax) || 0, -1, 1), wantJump, jumpHeld: !!d.jh, drop: !!d.dr, casts };
 }
@@ -2077,7 +2078,7 @@ function guestApply(s) {
     return;
   }
   if (st === 'countdown' || st === 'fight' || st === 'timeup') {
-    if (!fighting() && state !== 'timeup') { guestBuildFighters(); projectiles = []; beams = []; zones = []; rings = []; texts = []; particles = []; strikes = []; waves = []; traps = []; summons = []; flashes = []; pending = []; hideScreen(); NET.seenEv = 0; NET.inC = { j: 0, m: [0, 0, 0, 0, 0] }; }
+    if (!fighting() && state !== 'timeup') { guestBuildFighters(); projectiles = []; beams = []; zones = []; rings = []; texts = []; particles = []; strikes = []; waves = []; traps = []; summons = []; flashes = []; pending = []; hideScreen(); NET.seenEv = 0; NET.lastIn = null; }
     state = st; round = Number(s.rd) || 0; timeLeft = Number(s.tl) || 0; countdown = Number(s.cd) || 0;
     if (Array.isArray(s.bn)) { bannerText = String(s.bn[0]).slice(0, 40); banner = Number(s.bn[1]) || 0; }
     shake = Math.max(shake, Number(s.sh) || 0);
@@ -2092,18 +2093,19 @@ function applyFighters(F) {
   F.forEach((a, i) => {
     const f = fighters[i]; if (!f || !Array.isArray(a)) return;
     f.tx = Number(a[0]) || 0; f.ty = Number(a[1]) || 0; if (f.x === 0 || Math.abs(f.tx - f.x) > 200) { f.x = f.tx; f.y = f.ty; }
-    f.vx = Number(a[2]) || 0; f.face = a[3] < 0 ? -1 : 1; f.aimAng = Number(a[4]) || 0; f.mana = Number(a[5]) || 0; f.ult = Number(a[6]) || 0;
+    const predicted = NET.role === 'guest' && i === NET.side && state === 'fight';
+    f.svx = Number(a[2]) || 0; if (!predicted) f.vx = f.svx; f.face = a[3] < 0 ? -1 : 1; f.aimAng = Number(a[4]) || 0; f.mana = Number(a[5]) || 0; f.ult = Number(a[6]) || 0;
     if (Array.isArray(a[7])) f.cds = a[7].map(Number);
-    const fl = a[8] | 0; f.onGround = !!(fl & 1); f.stun = fl & 2 ? 0.1 : 0; f.blind = fl & 4 ? 0.1 : 0; f.slow = fl & 8 ? 0.1 : 0; f.invuln = fl & 16 ? 0.1 : 0; f.dash = fl & 32 ? { vx: f.vx, vy: 0 } : null;
+    const fl = a[8] | 0; f.sground = !!(fl & 1); if (!predicted) f.onGround = f.sground; f.stun = fl & 2 ? 0.1 : 0; f.blind = fl & 4 ? 0.1 : 0; f.slow = fl & 8 ? 0.1 : 0; f.invuln = fl & 16 ? 0.1 : 0; f.dash = fl & 32 ? { vx: f.vx, vy: 0 } : null;
     f.shield = Array.isArray(a[9]) ? { r: Number(a[9][0]), t: Number(a[9][1]), reflect: !!a[9][2] } : null;
-    f.castAnim = Number(a[10]) || 0; f.runPhase = Number(a[11]) || 0;
+    f.castAnim = Number(a[10]) || 0; if (!predicted) f.runPhase = Number(a[11]) || 0;
     f.score = a[12] | 0; f.roundScore = [a[13] | 0, a[14] | 0]; f.heads = a[15] | 0; f.bodies = a[16] | 0; f.bonus = a[17] | 0;
     const el = EL_IDS[a[18]]; if (el) f.element = el;
     if (Array.isArray(a[19])) f.stats = a[19].map(v => ({ casts: v[0] | 0, hits: v[1] | 0, pts: v[2] | 0 }));
-    f.vy = Number(a[20]) || 0;
+    f.svy = Number(a[20]) || 0; if (!predicted) f.vy = f.svy;
     f.orbit = Array.isArray(a[21]) ? { n: a[21][0] | 0, r: Number(a[21][1]), ang: Number(a[21][2]), or: Number(a[21][3]) } : null;
     const ct = a[22] | 0; f.castType = TYPE_IDS[ct % 100] || 'projectile'; f.castUlt = ct >= 100; if (f.castAnim > (f.castDur || 0)) f.castDur = f.castAnim; if (f.castAnim <= 0) f.castDur = 0;
-    f.jumps = a[23] | 0; f.hitDir = Number(a[24]) || 0;
+    if (!predicted) f.jumps = a[23] | 0; f.hitDir = Number(a[24]) || 0;
   });
 }
 function applyEntities(s) {
@@ -2131,7 +2133,9 @@ function guestUpdate(dt) {
   shake = Math.max(0, shake - dt * 40);
   banner = Math.max(0, banner - dt);
   if (!fighting() && state !== 'timeup') { pressed.clear(); return; }
-  for (const f of fighters) { if (f.tx !== undefined) { f.x += (f.tx - f.x) * Math.min(1, dt * 18); f.y += (f.ty - f.y) * Math.min(1, dt * 18); } }
+  const mine = fighters[NET.side];
+  for (const f of fighters) { if (f !== mine && f.tx !== undefined) { f.x += (f.tx - f.x) * Math.min(1, dt * 18); f.y += (f.ty - f.y) * Math.min(1, dt * 18); } }
+  if (mine) predictMine(mine, dt);
   for (const p of projectiles) { p.x += Math.cos(p.ang) * p.sp * dt; p.y += Math.sin(p.ang) * p.sp * dt; p.t += dt; if (Math.random() < 0.5) trailParticle(p.x, p.y, p.el, p.ang, p.sp); }
   for (const z of zones) z.spin += dt * 6;
   for (const x of flashes) x.life -= dt;
@@ -2142,6 +2146,35 @@ function guestUpdate(dt) {
   rings = rings.filter(r => r.life > 0);
   const me = fighters[NET.side]; if (me) for (let i = 0; i < 5; i++) me.fail[i] = Math.max(0, me.fail[i] - dt);
 }
+// Client-side prediction for the guest: run my own movement locally with my own input so it feels instant,
+// while the host stays in charge. The local copy is pulled gently toward the host's position and snapped if far off.
+function predictMine(f, dt) {
+  const r = NET.lastIn, live = state === 'fight' && r;
+  if (f.tx === undefined) return;
+  if (!live || f.dash || f.stun > 0) { f.x += (f.tx - f.x) * Math.min(1, dt * 18); f.y += (f.ty - f.y) * Math.min(1, dt * 18); f.pvx = f.svx || 0; f.pvy = f.svy || 0; f.pjumps = f.jumps; f.pground = f.sground; return; }
+  if (f.pvx === undefined) { f.pvx = f.svx || 0; f.pvy = f.svy || 0; f.pjumps = 0; f.pground = f.sground !== false; }
+  const sp = MOVE * (f.slow > 0 ? 0.5 : 1); let ground = f.pground;
+  f.pvx += (r.ax * sp - f.pvx) * Math.min(1, dt * (ground ? 18 : 10));
+  if (ground) f.pjumps = 0;
+  if (r.wantJump && (ground || f.pjumps < 2)) { const second = !ground; f.pvy = -JUMP * (second ? 0.85 : 1) * (f.slow > 0 ? 0.8 : 1); f.pjumps = second ? 2 : 1; ground = false; r.wantJump = false; f.pcut = false; }
+  if (!r.jumpHeld && !f.pcut && f.pvy < 0) { f.pvy *= 0.5; f.pcut = true; }
+  f.pvy = Math.min(1500, f.pvy + GRAV * (r.drop && !ground && f.pvy > -100 ? 1.7 : 1) * dt);
+  const prevY = f.y;
+  f.x = clamp(f.x + f.pvx * dt, 24, W - 24); f.y = Math.max(90, f.y + f.pvy * dt);
+  f.pground = false;
+  if (f.y >= GROUND) { f.y = GROUND; f.pvy = 0; f.pground = true; }
+  else if (f.pvy >= 0 && !r.drop) for (const p of PLATFORMS) if (prevY <= p.y + 1 && f.y >= p.y && f.x > p.x - 8 && f.x < p.x + p.w + 8) { f.y = p.y; f.pvy = 0; f.pground = true; break; }
+  // reconcile with the host: its position is a little old, so compare it with where I was recently, not where I am now
+  const H = f.phist = f.phist || []; H.push([f.x, f.y]); if (H.length > 36) H.shift();
+  let best = Infinity, bx = 0, by = 0;
+  for (const [hx, hy] of H) { const d = (f.tx - hx) ** 2 + (f.ty - hy) ** 2; if (d < best) { best = d; bx = f.tx - hx; by = f.ty - hy; } }
+  const err = Math.sqrt(best);
+  if (err > 140) { f.x = f.tx; f.y = f.ty; f.pvx = f.svx; f.pvy = f.svy; H.length = 0; }
+  else if (err > 4) { const k = Math.min(1, dt * (err > 50 ? 8 : 3)); f.x += bx * k; f.y += by * k; for (const h of H) { h[0] += bx * k; h[1] += by * k; } }
+  // drive the animation from the predicted motion
+  f.vx = f.pvx; f.vy = f.pvy; f.onGround = f.pground; f.jumps = f.pjumps;
+  if (Math.abs(f.vx) > 40 && f.onGround) f.runPhase = (f.predPhase = (f.predPhase || 0) + dt * Math.abs(f.vx) / 28);
+}
 function guestSendInput() {
   const sc = soloScheme(), r = readLocalInput(sc, 0);
   pressed.clear();
@@ -2151,7 +2184,8 @@ function guestSendInput() {
   if (r.pad && r.pad.aim) inp.s = [Math.round(r.pad.aim.x * 100), Math.round(r.pad.aim.y * 100)];
   else if (opts.aim === 'mouse') inp.a = [Math.round(mouse.x), Math.round(mouse.y)];
   const key = JSON.stringify(inp);
-  if (key !== NET.lastInKey) { NET.lastInKey = key; netPresence({ in: inp }); }
+  if (key !== NET.lastInKey) { NET.lastInKey = key; netPresence({ in: inp }, true); }
+  NET.lastIn = r;
 }
 
 /* ---------- Claude ultimate creation ---------- */
