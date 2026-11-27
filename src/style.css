@@ -395,3 +395,8 @@ body.has-screen .topbar { visibility: hidden; }
 .logo-mark, .logo-mark .vs, .logo-mark .one { -webkit-text-stroke: 0.045em currentColor; paint-order: stroke fill; }
 .brand, .brand .vs, .brand .one { -webkit-text-stroke: 0.06em currentColor; paint-order: stroke fill; }
 .logo-mark { text-shadow: 0.03em 0.04em 0 currentColor; letter-spacing: 0.02em; }
+.equip-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 12px; }
+.eq-line { margin-top: 10px; font-weight: 700; color: var(--el); }
+.loadout { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 4px; }
+.loadout li { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.loadout .slotkey { min-width: 1.8em; }

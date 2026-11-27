@@ -3209,9 +3209,10 @@ screenEl.addEventListener('click', e => {
   if (btn.dataset.blood) { bloodOn = btn.dataset.blood === 'on'; try { localStorage.setItem('stick-blood', bloodOn ? 'on' : 'off'); } catch (e) {} if (!bloodOn) stains = []; showSettings(); return; }
   if (btn.dataset.impact) { impactOn = btn.dataset.impact === 'on'; try { localStorage.setItem('stick-impact', impactOn ? 'on' : 'off'); } catch (e) {} showSettings(); return; }
   if (btn.dataset.pel) { sideEls[0] = btn.dataset.pel; showPracticeMenu(); return; }
-  if (btn.dataset.bel) { BUILD.el = btn.dataset.bel; BUILD.pv = null; BUILD.draft = null; showBuild(); return; }
+  if (btn.dataset.bel) { BUILD.el = btn.dataset.bel; BUILD.msg = null; BUILD.pv = null; BUILD.draft = null; showBuild(); return; }
   if (btn.dataset.prepel && round === 0) { const [sd, id] = btn.dataset.prepel.split(':'); PREP_PV = null; if (Number(sd) === 0 || opts.mode === 'online') sideEls[0] = id; changeElement(Number(sd), id); return; }
-  if (btn.dataset.pvid) { const id = btn.dataset.pvid; BUILD.pv = { id, ult: !!libraryFor(BUILD.el).ults.find(x => x.id === id) }; BUILD.draft = null; showBuild(); return; }
+  if (btn.dataset.equip !== undefined) { equipMove(Number(btn.dataset.equip)); return; }
+  if (btn.dataset.pvid) { BUILD.msg = null; const id = btn.dataset.pvid; BUILD.pv = { id, ult: !!libraryFor(BUILD.el).ults.find(x => x.id === id) }; BUILD.draft = null; showBuild(); return; }
   if (btn.dataset.pvslot) { const [sd, sl] = btn.dataset.pvslot.split(':').map(Number); PREP_PV = { side: sd, slot: sl }; showPrep(); screenEl.scrollTop = 0; return; }
   const side = Number(btn.dataset.side);
   switch (btn.dataset.action) {
@@ -3248,6 +3249,7 @@ screenEl.addEventListener('click', e => {
     case 'bnewult': BUILD.ai = null; newDraft(true); showBuild(); break;
     case 'bwatch': BUILD.pv = { draft: true, ult: BUILD.draft.ult, raw: deep(BUILD.draft.raw) }; showBuild(); break;
     case 'bcancel': BUILD.draft = null; BUILD.pv = null; showBuild(); break;
+    case 'bstarter': delete LIB.loadout[BUILD.el]; saveLib(); BUILD.msg = { kind: 'ok', text: 'Back to the starter loadout.' }; showBuild(); break;
     case 'bedit': {
       const pv = BUILD.pv; if (!pv || pv.draft) break; const x = libMove(BUILD.el, pv.id); if (!x) break;
       BUILD.ai = null; BUILD.draft = { ult: !!pv.ult, raw: deep(x.raw), editOf: pv.id }; BUILD.pv = { draft: true, ult: !!pv.ult, raw: BUILD.draft.raw }; showBuild(); break;
@@ -3530,6 +3532,7 @@ function showBuild() {
           <div class="statline"><span>Type <b>${esc(pm.type)}</b></span><span>Damage <b>${pm.stats.damage}</b></span><span>Speed <b>${pm.stats.speed}</b></span><span>Size <b>${pm.stats.size}</b></span><span>Count <b>${pm.stats.count}</b></span><span>Duration <b>${pm.stats.duration}</b></span></div>
           <div>${pm.effects.map(e => `<span class="fx">${esc(e.type)} ${e.strength}</span>`).join('') || '<span class="kind">no effects</span>'}</div>
           <div class="costs">${pm.ult ? `<span>Build ${pm.build_cost} of ${ULT_BUDGET}</span>` : `<span>Cooldown ${pm.cooldown}s</span><span>Build ${pm.build_cost}</span><span class="mana">${pm.mana_cost} mana</span>`}</div>
+          ${!pv.draft ? equipHTML(el, pv) : ''}
           ${!pv.draft && pv.id.startsWith('c') ? `<div class="edit-row"><button class="ghost pill" data-action="bdel">Delete this move</button></div>` : ''}</div>`
         : `<p class="note pv-empty">Click a move on the right to watch what it does.</p>`}
         ${BUILD.ai ? aiHTML() : ''}
@@ -3542,7 +3545,10 @@ function showBuild() {
         <div class="mgrid">${L.regs.map(x => card(x, false)).join('')}</div>
         <h3 style="margin-top:14px">Ultimates</h3>
         <div class="mgrid">${L.ults.map(x => card(x, true)).join('')}</div>
-        <p class="note" style="margin-top:12px">Equip moves in prep time before a match (Play or Practice uses your saved loadout).</p>
+        <h3 style="margin-top:16px">Your loadout</h3>
+        <ol class="loadout">${ids.map((id, k) => { const x = libMove(el, id); return `<li><span class="slotkey">${k === 4 ? 'U' : k + 1}</span>${esc(x ? x.raw.name : '?')}<span class="mc-sub"> · ${esc(x ? x.raw.type : '')}</span></li>`; }).join('')}</ol>
+        ${BUILD.msg ? `<p class="status ${BUILD.msg.kind}">${esc(BUILD.msg.text)}</p>` : ''}
+        <div class="edit-row"><button class="ghost pill small" data-action="bstarter">Use starter loadout</button></div>
       </section>
     </div>
   </div>`);
@@ -3599,6 +3605,22 @@ async function aiGo() {
     a.prompt = ''; a.busy = false;
     a.status = { kind: 'ok', text: `Here it is. Watch it above, tweak the sliders, or describe a change.${trimmed ? ' It was toned down a little to fit the limits.' : ''}${j.move.note ? ' AI note: ' + String(j.move.note).slice(0, 140) : ''}${typeof j.left === 'number' ? ` (${j.left} AI moves left today)` : ''}` };
   } catch (e) { a.busy = false; a.status = { kind: 'err', text: e.message || 'Something went wrong. Try again.' }; }
+  showBuild();
+}
+// Equip straight from Build: pick which slot the selected move goes into. The loadout must stay inside the budget.
+function equipHTML(el, pv) {
+  const ids = loadoutIds(el), at = ids.indexOf(pv.id);
+  if (at >= 0) return `<p class="note eq-line">Equipped as ${at === 4 ? 'your ultimate' : 'move ' + (at + 1)}.</p>`;
+  if (pv.ult) return `<div class="edit-row"><button class="cta" data-equip="4">Equip as ultimate</button></div>`;
+  return `<div class="equip-row"><span class="note">Equip in place of:</span>${[0, 1, 2, 3].map(k => { const x = libMove(el, ids[k]); return `<button class="pill small" data-equip="${k}">${k + 1}. ${esc(x ? x.raw.name : '?')}</button>`; }).join('')}</div>`;
+}
+function equipMove(slot) {
+  const el = BUILD.el, pv = BUILD.pv; if (!pv || pv.draft) return;
+  const ids = loadoutIds(el); ids[slot] = pv.id;
+  const res = validate(loadoutRaw(el, ids), el);
+  if (!res.valid) { BUILD.msg = { kind: 'err', text: res.errors[0] || 'That loadout is over the budget.' }; showBuild(); return; }
+  LIB.loadout[el] = ids; saveLib();
+  const x = libMove(el, pv.id); BUILD.msg = { kind: 'ok', text: `${x ? x.raw.name : 'Move'} equipped. Moves use ${res.total} of ${REG_BUDGET} points.` };
   showBuild();
 }
 function newDraft(ult) {
