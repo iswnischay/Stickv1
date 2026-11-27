@@ -1500,6 +1500,27 @@ function animEvents(f) {
   f.sqV += (300 * (target - f.sq) - 18 * f.sqV) * dt; f.sq = clamp(f.sq + f.sqV * dt, 0.75, 1.25);
   f.hitFlash = Math.max(0, (f.hitFlash || 0) - frameDt);
 }
+// Which fighter is "me" on this screen: my side online, the left fighter against the bot. Local 2-player: nobody.
+function isMine(f) { if (opts.mode === 'online') return NET.on && f.slot === NET.side; return opts.mode === 'bot' && f.slot === 0; }
+function drawMineGlow(f) {
+  const col = elCol(f.element), pulse = 0.5 + 0.5 * Math.sin(clock * 3.2), cy = f.y - 40;
+  ctx.save();
+  // soft aura behind the body
+  const g = ctx.createRadialGradient(f.x, cy, 6, f.x, cy, 62);
+  g.addColorStop(0, withA(col, 0.32 + pulse * 0.12)); g.addColorStop(0.55, withA(col, 0.12)); g.addColorStop(1, withA(col, 0));
+  ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(f.x, cy, 46, 66, 0, 0, 7); ctx.fill();
+  // ring on the floor under my feet
+  let gy = GROUND; for (const p of PLATFORMS) if (f.x > p.x - 8 && f.x < p.x + p.w + 8 && p.y >= f.y - 1 && p.y < gy) gy = p.y;
+  ctx.globalAlpha = 0.55 + pulse * 0.35; ctx.strokeStyle = col; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.ellipse(f.x, gy + 1, 26 + pulse * 3, 6 + pulse, 0, 0, 7); ctx.stroke();
+  // "YOU" tag with a little arrow above the head
+  const ty = f.y - 104 - pulse * 3;
+  ctx.globalAlpha = 1; ctx.fillStyle = col;
+  ctx.beginPath(); ctx.moveTo(f.x - 7, ty + 6); ctx.lineTo(f.x + 7, ty + 6); ctx.lineTo(f.x, ty + 14); ctx.closePath(); ctx.fill();
+  ctx.font = '400 16px Anton, Impact, sans-serif'; ctx.textAlign = 'center';
+  ctx.lineWidth = 4; ctx.strokeStyle = C.paper; ctx.strokeText('YOU', f.x, ty + 2); ctx.fillText('YOU', f.x, ty + 2);
+  ctx.restore();
+}
 function drawFighter(f) {
   const col = elCol(f.element);
   if (f.faceS === undefined) f.faceS = f.face;
@@ -1508,6 +1529,7 @@ function drawFighter(f) {
   const P = smoothPose(f), fs = Math.abs(f.faceS) < 0.15 ? Math.sign(f.faceS || 1) * 0.15 : f.faceS;
   const shakeX = f.stun > 0 ? (Math.random() - 0.5) * 4 : 0;
   drawShadow(f);
+  if (isMine(f) && fighters.length === 2) drawMineGlow(f);
   if (f.dash) { for (let g = 1; g <= 4; g++) { ctx.save(); ctx.globalAlpha = 0.2 / g; ctx.translate(-(f.vx || 0) * 0.012 * g, -(f.vy || 0) * 0.008 * g); drawBody(f, P, fs, shakeX, col, true); ctx.restore(); } }
   ctx.save();
   // squash and stretch around the feet, keeping the volume the same
