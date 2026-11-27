@@ -316,3 +316,15 @@ button.small { padding: 3px 12px; font-size: 0.88rem; }
 @media (max-width: 760px) { .prep-pv { grid-template-columns: 1fr; } }
 .exit-btn { position: absolute; bottom: 14px; right: 16px; z-index: 5; padding: 5px 12px; font-size: 0.9rem; background: var(--panel); }
 #stage { position: relative; }
+
+/* ---------- accounts + AI builder ---------- */
+.acct { display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+.acct .note { flex-basis: 100%; text-align: center; }
+.google-btn { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; background: #fff; color: #1f1f1f; border: 2px solid #dadce0; border-radius: 999px; padding: 7px 16px; }
+.google-btn:hover { background: #f6f8fb; }
+.google-btn .g { font-family: Arial, sans-serif; font-weight: 900; color: #4285f4; }
+.who-chip { font-family: var(--impact); font-size: 1.2rem; padding: 4px 12px; border: 2px solid var(--ink); border-radius: 999px; }
+.ai-box { margin-top: 14px; padding: 12px; border: 2px solid var(--el); border-radius: 10px; background: var(--paper); }
+.ai-box h3 { margin: 0 0 4px; }
+.ai-box textarea { min-height: 0; margin-top: 6px; font: 1rem/1.4 var(--display); padding: 8px 10px; }
+.ai-box .seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }

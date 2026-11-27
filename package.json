@@ -12,6 +12,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "firebase": "^13.4.0",
     "peerjs": "^1.5.4"
   },
   "devDependencies": {

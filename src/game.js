@@ -426,7 +426,7 @@ function applyEffects(tgt, m, srcX) {
   const push = effOf(m, 'push'), pull = effOf(m, 'pull'), blind = effOf(m, 'blind'), slow = effOf(m, 'slow');
   if (push && m.type !== 'zone') { tgt.vx = dir * (220 + push * 150); tgt.vy = -220 - push * 60; tgt.onGround = false; tgt.stun = Math.max(tgt.stun, 0.22); }
   if (pull && m.type !== 'zone') { tgt.vx = -dir * (180 + pull * 110); tgt.stun = Math.max(tgt.stun, 0.18); }
-  if (blind) { tgt.blind = Math.max(tgt.blind, 0.3 + blind * 0.45); addText(tgt.x, tgt.y - 110, 'blinded', C.soft, 20); }
+  if (blind) { tgt.blind = Math.max(tgt.blind, 0.3 + blind * 0.45 + (m.stats.duration || 0) * 0.5); addText(tgt.x, tgt.y - 110, 'blinded', C.soft, 20); }
   if (slow) { tgt.slow = Math.max(tgt.slow, 0.6 * slow); }
 }
 
@@ -1743,6 +1743,17 @@ function updateCam(dt) {
   const half = W / (2 * cam.z); cam.x = clamp(cam.x, half, W - half);
   cam.y = GROUND - (GROUND - H / 2) / cam.z;
 }
+// When I'm blinded my screen goes dark except for a small circle around me.
+function drawDarkness() {
+  const me = fighters.find(f => isMine(f));
+  const target = me && me.blind > 0 && (fighting() || state === 'timeup') ? 1 : 0;
+  drawDarkness.a = (drawDarkness.a || 0) + (target - (drawDarkness.a || 0)) * Math.min(1, frameDt * (target ? 10 : 4));
+  const a = drawDarkness.a; if (a < 0.02 || !me) return;
+  const sx = (me.x - cam.x) * cam.z + W / 2, sy = (me.y - 40 - cam.y) * cam.z + H / 2;
+  const g = ctx.createRadialGradient(sx, sy, 30, sx, sy, 140);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, `rgba(4,4,10,${0.93 * a})`);
+  ctx.save(); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); ctx.restore();
+}
 function render() {
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
   updateCam(frameDt || 1 / 60);
@@ -1758,6 +1769,7 @@ function render() {
   drawTexts();
   fighters.forEach(drawAim);
   ctx.restore();
+  drawDarkness();
   if (!PV.on) { drawHUD(); drawBanner(); }
   drawReconnect();
   if (typeof exitBtn !== 'undefined') exitBtn.hidden = !(opts.mode === 'practice' && state === 'fight' && !PV.on);
@@ -2853,6 +2865,7 @@ screenEl.addEventListener('toggle', e => {
 }, true);
 screenEl.addEventListener('input', e => {
   const t = e.target;
+  if (t.dataset.aiprompt !== undefined && BUILD.ai) { BUILD.ai.prompt = t.value; return; }
   if (t.dataset.bd && BUILD.draft) {
     draftEdit(t.dataset.bd, t.value);
     if (t.type === 'range') { const o = t.parentElement.querySelector('output'); if (o) o.textContent = t.value; }
@@ -2883,6 +2896,7 @@ screenEl.addEventListener('click', e => {
     return;
   }
   if (btn.dataset.netpick) { const keep = {}; screenEl.querySelectorAll('[data-setting]').forEach(i => { keep[i.dataset.setting] = i.value; }); settings.net = btn.dataset.netpick; showSettings(); Object.entries(keep).forEach(([k, v]) => { const i = screenEl.querySelector(`[data-setting="${k}"]`); if (i) i.value = v; }); return; }
+  if (btn.dataset.aiult !== undefined) { BUILD.ai.ult = btn.dataset.aiult === '1'; const box = screenEl.querySelector('[data-aiprompt]'); if (box) BUILD.ai.prompt = box.value; showBuild(); return; }
   if (btn.dataset.pel) { sideEls[0] = btn.dataset.pel; showPracticeMenu(); return; }
   if (btn.dataset.bel) { BUILD.el = btn.dataset.bel; BUILD.pv = null; BUILD.draft = null; showBuild(); return; }
   if (btn.dataset.prepel) { const [sd, id] = btn.dataset.prepel.split(':'); PREP_PV = null; if (Number(sd) === 0 || opts.mode === 'online') sideEls[0] = id; changeElement(Number(sd), id); return; }
@@ -2897,11 +2911,23 @@ screenEl.addEventListener('click', e => {
     case 'start-bot': opts.mode = 'bot'; PREP_PV = null; setupMatch(); updateLegend(); break;
     case 'practice-start': startPractice(); break;
     case 'pv-close': PREP_PV = null; showPrep(); break;
-    case 'bnew': newDraft(false); showBuild(); break;
-    case 'bnewult': newDraft(true); showBuild(); break;
+    case 'bnew': BUILD.ai = null; newDraft(false); showBuild(); break;
+    case 'ai-open': BUILD.ai = { ult: false, prompt: '', busy: false, status: null }; BUILD.draft = null; showBuild(); break;
+    case 'ai-close': BUILD.ai = null; showBuild(); break;
+    case 'ai-go': aiGo(); break;
+    case 'signin': window.StickAccount && window.StickAccount.signIn().catch(err => { const m = String((err && err.code) || err.message || err); if (!/popup-closed|cancelled/.test(m)) alert('Sign-in failed: ' + m); }); break;
+    case 'signout': window.StickAccount && window.StickAccount.signOut().then(() => showMenu()); break;
+    case 'username': showUsername(); break;
+    case 'save-username': {
+      const v = (screenEl.querySelector('[data-uname]') || {}).value || '';
+      window.StickAccount.claimUsername(v).then(() => showMenu()).catch(err => showUsername(err.message || 'Could not save that name.'));
+      break;
+    }
+    case 'bnewult': BUILD.ai = null; newDraft(true); showBuild(); break;
     case 'bwatch': BUILD.pv = { draft: true, ult: BUILD.draft.ult, raw: deep(BUILD.draft.raw) }; showBuild(); break;
     case 'bcancel': BUILD.draft = null; BUILD.pv = null; showBuild(); break;
     case 'bsave': {
+      if (BUILD.ai) BUILD.ai = null;
       const d = BUILD.draft, el = BUILD.el, id = 'c' + Date.now().toString(36);
       const m = normalize(deep(d.raw), el, d.ult ? 4 : 0, [], []);
       (LIB.custom[el] = LIB.custom[el] || []).push({ id, ult: d.ult, raw: toRaw(m) }); saveLib();
@@ -2977,9 +3003,10 @@ function saveDescsNoop() {}
    Every element has a library of moves: its 5 starters, a few extra presets borrowed from other elements and
    re-skinned, and any custom moves the player made in Build. A loadout is 4 moves + 1 ultimate picked from it.
    In matches players can only swap between moves they own; they can't edit stats there. */
+const ACC = { user: null, username: null, ready: false };
 const LIB_KEY = 'stick-lib-v1';
 let LIB = (() => { try { const v = JSON.parse(localStorage.getItem(LIB_KEY) || 'null'); if (v && typeof v === 'object') return { custom: v.custom || {}, loadout: v.loadout || {} }; } catch (e) {} return { custom: {}, loadout: {} }; })();
-function saveLib() { try { localStorage.setItem(LIB_KEY, JSON.stringify(LIB)); } catch (e) {} }
+function saveLib() { try { localStorage.setItem(LIB_KEY, JSON.stringify(LIB)); } catch (e) {} if (ACC.user && window.StickAccount) window.StickAccount.saveLib(LIB); }
 const EXTRA_CACHE = {};
 function extrasFor(el) {
   if (EXTRA_CACHE[el]) return EXTRA_CACHE[el];
@@ -3029,8 +3056,40 @@ function showMenu() {
       <button class="home-card" data-action="build"><span class="hc-title">Build</span><span class="hc-sub">See every move, watch it, make your own</span></button>
     </div>
     <div class="home-links"><button class="ghost" data-action="controls">Controls</button>${STANDALONE ? '<button class="ghost" data-action="settings">Settings</button>' : ''}</div>
+    ${accountChip()}
   </div>`);
 }
+function accountChip() {
+  const A = window.StickAccount;
+  if (!A || !A.available()) return '';
+  if (!ACC.ready) return '<p class="note acct">Checking sign-in…</p>';
+  if (!ACC.user) return `<div class="acct"><button class="google-btn" data-action="signin"><span class="g">G</span> Sign in with Google</button><span class="note">Optional. Saves your moves to your account and unlocks the AI move builder.</span></div>`;
+  return `<div class="acct"><span class="who-chip">@${esc(ACC.username || '…')}</span><button class="ghost small" data-action="username">Change name</button><button class="ghost small" data-action="signout">Sign out</button></div>`;
+}
+function showUsername(msg) {
+  state = 'username';
+  const sug = (ACC.user && ACC.user.name ? ACC.user.name : 'player').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 12) || 'player';
+  showScreen(`<div class="narrow">
+    <h2>Pick a username</h2>
+    <p class="note">3–16 letters, numbers or _. Other players see this name.</p>
+    <div class="seg" style="margin-top:12px"><input data-uname maxlength="16" value="${esc(ACC.username || sug)}" style="font:400 1.3rem Anton, Impact, sans-serif;padding:6px 10px;border:2px solid var(--ink);border-radius:8px;background:var(--panel);color:var(--ink);text-transform:lowercase"><button class="cta" data-action="save-username">Save</button></div>
+    ${msg ? `<p class="status err">${esc(msg)}</p>` : ''}
+    <div class="go">${ACC.username ? '<button class="ghost" data-action="menu">Back</button>' : '<button class="ghost" data-action="signout">Sign out instead</button>'}</div>
+  </div>`);
+}
+// merge moves saved in the account with the ones on this device
+function mergeCloudLib(cloud) {
+  if (!cloud || typeof cloud !== 'object') { saveLib(); return; }
+  const custom = cloud.custom || {}, loadout = cloud.loadout || {};
+  for (const el of EL_IDS) {
+    const mine = LIB.custom[el] || [], theirs = Array.isArray(custom[el]) ? custom[el] : [];
+    const byId = new Map(); [...theirs, ...mine].forEach(c => { if (c && c.id && c.raw) byId.set(c.id, c); });
+    if (byId.size) LIB.custom[el] = [...byId.values()];
+    if (Array.isArray(loadout[el])) LIB.loadout[el] = loadout[el];
+  }
+  saveLib();
+}
+
 function showPlay() {
   state = 'play';
   showScreen(`<div class="narrow">
@@ -3139,7 +3198,8 @@ function showBuild() {
           ${!pv.draft && pv.id.startsWith('c') ? `<div class="edit-row"><button class="ghost" data-action="bdel">Delete this move</button></div>` : ''}</div>`
         : `<p class="note pv-empty">Click a move on the right to watch what it does.</p>`}
         ${BUILD.draft ? draftHTML() : `<div class="edit-row"><button class="cta" data-action="bnew">Make a new move</button><button data-action="bnewult">Make a new ultimate</button>
-          <button class="ghost" disabled title="Coming in the next update">Describe it to the AI (soon)</button></div>`}
+          <button data-action="ai-open">Describe it to the AI</button></div>`}
+        ${BUILD.ai ? aiHTML() : ''}
       </section>
       <section class="col">
         <h3>${elName(el)} moves</h3>
@@ -3152,6 +3212,59 @@ function showBuild() {
   </div>`);
   if (pm) startPreview(pm, el);
 }
+const AI_URL = BUILT_IN_RELAY ? BUILT_IN_RELAY.replace(/^ws/, 'http').replace(/\/+$/, '') + '/ai/move' : '';
+const AI_EXAMPLES = { light: 'five swords of light thrown in a fan', darkness: 'blind the enemy so their screen goes dark for 5 seconds', fire: 'a ring of fire that explodes around me', water: 'a whirlpool that pulls the enemy in', earth: 'a wall of rock that blocks everything', wind: 'a tornado that pushes the enemy away', antimatter: 'a black hole that drags enemies to the middle', steel: 'three spinning blades that orbit me', lightning: 'chain lightning from the sky, 4 bolts', ice: 'an ice spear that slows the enemy' };
+function aiHTML() {
+  const a = BUILD.ai, el = BUILD.el;
+  if (!ACC.user) return `<div class="ai-box"><h3>Describe a move</h3><p class="note">Sign in with Google to use the AI move builder. Your moves are then saved to your account.</p><div class="edit-row"><button class="google-btn" data-action="signin"><span class="g">G</span> Sign in with Google</button><button class="ghost" data-action="ai-close">Cancel</button></div></div>`;
+  if (!AI_URL) return `<div class="ai-box"><p class="status err">The AI move builder isn't set up on this site yet (it needs the Cloudflare relay and the GEMINI_API_KEY secret).</p><button class="ghost" data-action="ai-close">Close</button></div>`;
+  const refining = !!(BUILD.draft && BUILD.draft.ai);
+  return `<div class="ai-box"><h3>${refining ? 'Change it' : `Describe a new ${elName(el).toLowerCase()} ${a.ult ? 'ultimate' : 'move'}`}</h3>
+    ${refining ? '' : `<div class="seg" style="margin:6px 0">${[[false, 'Move'], [true, 'Ultimate']].map(([v, l]) => `<button data-aiult="${v ? 1 : 0}" aria-pressed="${a.ult === v}">${l}</button>`).join('')}</div>`}
+    <textarea data-aiprompt rows="2" maxlength="300" placeholder="${refining ? 'e.g. make it faster and add homing' : 'e.g. ' + esc(AI_EXAMPLES[el])}">${esc(a.prompt || '')}</textarea>
+    <div class="edit-row">${a.busy ? '<button disabled>Building…</button>' : `<button class="cta" data-action="ai-go">${refining ? 'Update move' : 'Create move'}</button>`}<button class="ghost" data-action="ai-close">Close</button></div>
+    ${a.status ? `<p class="status ${a.status.kind}">${esc(a.status.text)}</p>` : ''}
+  </div>`;
+}
+// Bring any move inside the limits without rejecting it: same order of trims as fitBudget.
+function fitOne(raw, ult) {
+  const el = BUILD.el; let m = normalize(deep(raw), el, ult ? 4 : 0, [], []);
+  const ok = () => ult ? m.build_cost <= ULT_BUDGET : (m.build_cost <= 40 && m.mana_cost <= 60);
+  for (let g = 0; g < 300 && !ok(); g++) {
+    const s = m.stats;
+    if (!ult && m.mana_cost > 60 && m.mana_overcharge > 0) m.mana_overcharge = Math.max(0, m.mana_overcharge - 5);
+    else if (!ult && m.cooldown < 7) m.cooldown++;
+    else if (Math.max(s.speed, s.size) > 2) { if (s.speed >= s.size) s.speed--; else s.size--; }
+    else if (s.damage > 1) s.damage--;
+    else if (s.count > 1) s.count--;
+    else if (s.duration > 1) s.duration--;
+    else if (m.effects.some(x => x.strength > 1)) m.effects.sort((a, b) => b.strength - a.strength)[0].strength--;
+    else if (!ult && m.cooldown < 10) m.cooldown++;
+    else break;
+    costs(m);
+  }
+  return toRaw(m);
+}
+async function aiGo() {
+  const a = BUILD.ai, box = screenEl.querySelector('[data-aiprompt]'); a.prompt = box ? box.value.trim() : a.prompt;
+  if (!a.prompt || a.prompt.length < 3) { a.status = { kind: 'err', text: 'Describe the move first.' }; showBuild(); return; }
+  const refining = !!(BUILD.draft && BUILD.draft.ai), ult = refining ? BUILD.draft.ult : a.ult;
+  a.busy = true; a.status = { kind: 'busy', text: 'Building your move…' }; showBuild();
+  try {
+    const tok = await window.StickAccount.idToken();
+    const r = await fetch(AI_URL, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok },
+      body: JSON.stringify({ element: BUILD.el, prompt: a.prompt, ult, base: refining ? BUILD.draft.raw : null }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.move) throw new Error(j.message || 'The AI could not build that move.');
+    const before = normalize(deep(j.move), BUILD.el, ult ? 4 : 0, [], []), raw = fitOne(j.move, ult), after = normalize(deep(raw), BUILD.el, ult ? 4 : 0, [], []);
+    raw.flavor = String(j.move.flavor || '').slice(0, 160);
+    BUILD.draft = { ult, raw, ai: true }; BUILD.pv = { draft: true, ult, raw };
+    const trimmed = after.build_cost < before.build_cost;
+    a.prompt = ''; a.busy = false;
+    a.status = { kind: 'ok', text: `Here it is. Watch it above, tweak the sliders, or describe a change.${trimmed ? ' It was toned down a little to fit the limits.' : ''}${j.move.note ? ' AI note: ' + String(j.move.note).slice(0, 140) : ''}${typeof j.left === 'number' ? ` (${j.left} AI moves left today)` : ''}` };
+  } catch (e) { a.busy = false; a.status = { kind: 'err', text: e.message || 'Something went wrong. Try again.' }; }
+  showBuild();
+}
 function newDraft(ult) {
   const base = ult ? deep(DEFAULTS[BUILD.el][4]) : { name: 'My move', type: 'projectile', stats: { damage: 3, speed: 6, size: 3, count: 1, duration: 0 }, effects: [], cooldown: 3, mana_overcharge: 0, visual: { shape: 'orb' } };
   base.name = ult ? 'My ultimate' : base.name; base.flavor = '';
@@ -3163,7 +3276,7 @@ function draftHTML() {
   const over = d.ult ? m.build_cost > ULT_BUDGET : (m.mana_cost > 60 || m.build_cost > 40);
   const rng = (f, label, min, max, val, step = 1) => `<label>${label} <output>${val}</output><input type="range" min="${min}" max="${max}" step="${step}" value="${val}" data-bd="${f}"></label>`;
   const eff = n => { const e = m.effects[n]; return `<label>Effect ${n + 1}<select data-bd="eff${n}"><option value="">none</option>${Object.keys(EFFECT_COST).map(t => `<option ${e && e.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>${e ? rng('effs' + n, 'Strength', 1, 5, e.strength) : ''}`; };
-  return `<div class="draft"><h3>${d.ult ? 'New ultimate' : 'New move'}</h3>
+  return `<div class="draft"><h3>${d.ai ? 'Your AI-built ' + (d.ult ? 'ultimate' : 'move') : d.ult ? 'New ultimate' : 'New move'}</h3>
     <div class="bgrid">
       <label class="wide">Name<input type="text" maxlength="26" value="${esc(m.name)}" data-bd="name"></label>
       <label>Type<select data-bd="type">${Object.keys(TYPE_BASE).map(t => `<option ${m.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
@@ -3174,7 +3287,7 @@ function draftHTML() {
     </div>
     <p class="type-hint">${TYPE_HINTS[m.type]}</p>
     <p class="${over ? 'status err' : 'note'}">${d.ult ? `Build ${m.build_cost} of ${ULT_BUDGET}` : `Build ${m.build_cost} · ${m.mana_cost} mana per cast`}${over ? (d.ult ? ' — too strong for an ultimate' : ' — too strong for one move (max 40 build, 60 mana)') : ''}</p>
-    <div class="edit-row"><button class="cta" data-action="bsave" ${over ? 'disabled' : ''}>Save move</button><button data-action="bwatch">Watch it</button><button class="ghost" data-action="bcancel">Cancel</button></div>
+    <div class="edit-row"><button class="cta" data-action="bsave" ${over ? 'disabled' : ''}>${d.ai ? 'Add to my moves' : 'Save move'}</button><button data-action="bwatch">Watch it</button><button class="ghost" data-action="bcancel">${d.ai ? 'Discard' : 'Cancel'}</button></div>
   </div>`;
 }
 function draftEdit(field, value) {
@@ -3243,6 +3356,14 @@ if (/[?&]debug\b/.test(location.search)) window.__stick = { get state() { return
 resize();
 updateLegend();
 showMenu();
+if (window.StickAccount) window.StickAccount.onChange(st => {
+  const wasUser = ACC.user && ACC.user.uid;
+  ACC.user = st.user; ACC.username = st.username; ACC.ready = st.ready;
+  if (st.user && st.user.uid !== wasUser) mergeCloudLib(st.lib);
+  if (st.user && !st.username && ['menu', 'play', 'build', 'practice-menu'].includes(state)) { showUsername(); return; }
+  if (state === 'menu') showMenu();
+  else if (state === 'build') showBuild();
+});
 initSample();
 requestAnimationFrame(loop);
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => render());

@@ -8,11 +8,22 @@ A stick-figure fighting game. Pick one of 10 elements, build four moves and an u
 - **Practice**: pick an element and try your moves on a dummy with endless mana.
 - **Build**: browse every element's moves, click any move to watch it in action, and make your own moves or ultimates with sliders. Saved moves show up in the swap lists in prep.
 
+## Accounts and the AI move builder
+
+Sign-in is optional (Google, through Firebase). Signed-in players pick a unique username, their moves are saved to their account, and they can use **Build → Describe it to the AI**: write an idea ("five swords of light thrown in a fan", "blind the enemy so their screen goes dark for 5 seconds"), watch the move the AI builds, ask for changes, then add it to your moves. The AI only combines the game's building blocks, and every move is trimmed to fit the normal limits, so AI moves are never overpowered. Each player gets 40 AI moves a day.
+
+Setup (once):
+1. Firebase project `stickv1-36a11`: Authentication → Sign-in method → Google (on). Authentication → Settings → Authorized domains → add `YOUR-USERNAME.github.io`.
+2. Firestore Database → Rules: paste the contents of `firestore.rules` and **Publish**.
+3. Get a free Gemini key at aistudio.google.com and add it as the repository secret `GEMINI_API_KEY`. The workflow hands it to the Cloudflare relay; it never appears in the web page.
+
 ## Folder layout
 
 - `index.html`, `src/` — the game (`src/game.js` is the code, `src/style.css` the styles)
 - `.github/workflows/deploy.yml` — builds and publishes to GitHub Pages automatically
-- `server/` — the online-play relay (Cloudflare Worker), deployed by the workflow
+- `server/` — the online-play relay and AI move endpoint (Cloudflare Worker), deployed by the workflow
+- `src/account.js` — Google sign-in, usernames and cloud-saved moves (Firebase)
+- `firestore.rules` — database security rules to paste into Firebase
 - `desktop/` — optional Windows/Mac app wrapper
 
 ## Run it on your computer
