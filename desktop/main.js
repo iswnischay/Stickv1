@@ -1,11 +1,11 @@
-// Stick V1 desktop app: opens the single-file web build in its own window.
+// Stick v1 desktop app: opens the single-file web build in its own window.
 const { app, BrowserWindow, shell } = require('electron');
 const path = require('path');
 
 function createWindow() {
   const win = new BrowserWindow({
     width: 1440, height: 900, minWidth: 900, minHeight: 560,
-    title: 'Stick V1', backgroundColor: '#18211d', autoHideMenuBar: true,
+    title: 'Stick v1', backgroundColor: '#050a14', autoHideMenuBar: true,
     webPreferences: { contextIsolation: true, nodeIntegration: false, backgroundThrottling: false }
   });
   win.loadFile(path.join(__dirname, 'web', 'index.html'));

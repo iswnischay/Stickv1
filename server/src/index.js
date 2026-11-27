@@ -1,4 +1,4 @@
-// Stick V1 relay server (Cloudflare Worker + one Durable Object per room).
+// Stick v1 relay server (Cloudflare Worker + one Durable Object per room).
 //
 // Protocol (JSON text frames), matching wsRoom() in src/game.js:
 //   client -> server  { t: 'join', room, id }     first message; id is chosen by the client so reconnects keep it
@@ -25,7 +25,7 @@ export default {
       return aiMove(request, env, cors);
     }
     if (request.headers.get('Upgrade') !== 'websocket') {
-      return new Response('Stick V1 relay is running.', { headers: { 'content-type': 'text/plain', ...cors } });
+      return new Response('Stick v1 relay is running.', { headers: { 'content-type': 'text/plain', ...cors } });
     }
     const room = cleanRoom(url.searchParams.get('room'));
     if (!room) return new Response('Missing ?room=', { status: 400, headers: cors });

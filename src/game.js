@@ -489,7 +489,7 @@ function tryCast(f, i) {
     return false;
   }
   f.queued = null;
-  if (m.ult) { cam.focus = { x: f.x, t: 0.9 }; f.ult = 0; banner = 1.1; bannerText = m.name; shake = 14; hitstop = 0.12; slowmo = 0.45; cam.punch = 0.1; burstParticles(f.x, chestY(f), f.element, 40, 500); }
+  if (m.ult) { impactFrame(f.x, chestY(f), f.element, true); cam.focus = { x: f.x, t: 0.9 }; f.ult = 0; banner = 1.1; bannerText = m.name; shake = 14; hitstop = 0.12; slowmo = 0.45; cam.punch = 0.1; burstParticles(f.x, chestY(f), f.element, 40, 500); }
   else { f.mana -= m.mana_cost; f.cds[i] = m.cooldown; }
   f.stats[i].casts++; f.castType = m.type; f.castUlt = !!m.ult; f.castAnim = f.castDur = CAST_DUR[m.type] || 0.28;
   const st = m.stats, o = opp(f), ang = f.aimAng, cy = chestY(f);
@@ -1452,7 +1452,18 @@ function nudge(f, key, amt, i) { if (!f.poseV) return; if (i === undefined) f.po
 // Cosmetic effects that live only on this screen (impact stars, ground rings). Never affect gameplay.
 let fx = [];
 function fxPush(e) { if (fx.length < 60) fx.push(e); }
+// Impact frames: for a split second the whole arena turns into flat high-contrast silhouettes with
+// speed lines bursting from the hit, the way action comics and anime freeze a big blow.
+const IMPACT = { t: 0, max: 0, x: 0, y: 0, el: 'fire', strong: false, seed: 0 };
+const reduceMotion = (() => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } })();
+let impactOn = (() => { try { return localStorage.getItem('stick-impact') !== 'off'; } catch (e) { return true; } })();
+function impactFrame(x, y, el, strong) {
+  if (!impactOn || reduceMotion) return;
+  if (IMPACT.t > 0 && IMPACT.strong && !strong) return;
+  IMPACT.max = IMPACT.t = strong ? 0.13 : 0.055; IMPACT.x = x; IMPACT.y = y; IMPACT.el = el; IMPACT.strong = strong; IMPACT.seed = Math.random() * 1000;
+}
 function impactFx(x, y, el, k = 1) {
+  impactFrame(x, y, el, k > 1.2);
   fxPush({ kind: 'impact', x, y, r: 34 * k, el, life: 0.22, max: 0.22, rot: Math.random() * 6 });
   for (let i = 0; i < 5 * k; i++) { const a = Math.random() * 6.28, sp = 380 + Math.random() * 380; spawnP(x, y, el, Math.cos(a) * sp, Math.sin(a) * sp, 0.18 + Math.random() * 0.12, 3, 'streak'); }
 }
@@ -1758,6 +1769,45 @@ function updateCam(dt) {
 }
 // When I'm blinded my own screen is covered: a white flash for light, a creeping shroud for darkness,
 // and a thick haze in the attacker's element colour for anything else. Only the blinded player sees this.
+function drawImpactFrame() {
+  if (IMPACT.t <= 0) return;
+  IMPACT.t = Math.max(0, IMPACT.t - frameDt);
+  const u = 1 - IMPACT.t / IMPACT.max, col = elCol(IMPACT.el);
+  // strong hits flip: first a bright negative frame, then a dark one; light hits use only the dark frame
+  const negative = IMPACT.strong && u < 0.45;
+  const bg = negative ? '#f3f7ff' : '#04060d', fig = negative ? '#04060d' : '#ffffff';
+  const sx = (IMPACT.x - cam.x) * cam.z + W / 2, sy = (IMPACT.y - cam.y) * cam.z + H / 2;
+  const fade = IMPACT.strong ? 1 : 0.82 * (1 - u * 0.5);
+  ctx.save();
+  ctx.globalAlpha = fade; ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  // speed lines: thin wedges shooting out from the point of impact
+  const n = IMPACT.strong ? 44 : 26;
+  ctx.fillStyle = negative ? withA(col, 0.9) : withA(col, 0.55);
+  for (let k = 0; k < n; k++) {
+    const r = hash(IMPACT.seed + k), an = (k / n) * Math.PI * 2 + r * 0.25, inner = 40 + r * 90, w = 0.012 + r * 0.03;
+    ctx.beginPath();
+    ctx.moveTo(sx + Math.cos(an - w) * inner, sy + Math.sin(an - w) * inner);
+    ctx.lineTo(sx + Math.cos(an) * 1600, sy + Math.sin(an) * 1600);
+    ctx.lineTo(sx + Math.cos(an + w) * inner, sy + Math.sin(an + w) * inner);
+    ctx.closePath(); ctx.fill();
+  }
+  // jagged starburst right where the blow landed
+  const R = (IMPACT.strong ? 70 : 42) * (0.8 + u * 0.6);
+  ctx.fillStyle = col; ctx.strokeStyle = negative ? '#04060d' : '#ffffff'; ctx.lineWidth = 3;
+  ctx.beginPath();
+  for (let k = 0; k < 18; k++) { const an = k / 18 * Math.PI * 2 + IMPACT.seed, rr = k % 2 ? R * (0.35 + 0.2 * hash(IMPACT.seed + k * 3)) : R; ctx.lineTo(sx + Math.cos(an) * rr, sy + Math.sin(an) * rr); }
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  // fighters as solid silhouettes, in world space
+  ctx.globalAlpha = 1;
+  ctx.translate(W / 2, H / 2); ctx.scale(cam.z, cam.z); ctx.translate(-cam.x, -cam.y);
+  for (const f of fighters) {
+    if (!f.pose) continue;
+    const fs = Math.abs(f.faceS) < 0.15 ? Math.sign(f.faceS || 1) * 0.15 : f.faceS;
+    ctx.save(); ctx.translate(f.x, f.y); ctx.scale(1 / Math.sqrt(f.sq || 1), f.sq || 1); ctx.translate(-f.x, -f.y);
+    ctx.lineWidth = 7; drawBody(f, f.pose, fs, 0, fig, true); ctx.restore();
+  }
+  ctx.restore();
+}
 function drawDarkness() {
   // in a move preview, show what the dummy would see so you can judge the effect
   const me = PV.on ? fighters[1] : fighters.find(f => isMine(f));
@@ -1809,6 +1859,7 @@ function render() {
   drawTexts();
   fighters.forEach(drawAim);
   ctx.restore();
+  drawImpactFrame();
   drawDarkness();
   if (!PV.on) { drawHUD(); drawBanner(); }
   drawReconnect();
@@ -2395,7 +2446,7 @@ function refreshForgeUI() {
 
 function buildUltPrompt(element, desc, invent, theme) {
   const El = elName(element);
-  return `You design the ULTIMATE move for one fighter in “Stick V1”, a 2D stick-figure fighting game. The player describes their ultimate in their own words and you turn it into game data. Keep the player’s idea recognisable, make it feel spectacular, and give it a vivid name and one flavor sentence saying how it looks and plays.
+  return `You design the ULTIMATE move for one fighter in “Stick v1” (stick vs 1), a 2D stick-figure fighting game. The player describes their ultimate in their own words and you turn it into game data. Keep the player’s idea recognisable, make it feel spectacular, and give it a vivid name and one flavor sentence saying how it looks and plays.
 
 The fighter’s element is ${El}. Element rule: ${ELEMENTS[element].passive}
 The ultimate costs no mana and has no cooldown: it fires once the ultimate meter fills, about once or twice a round.
@@ -2616,6 +2667,9 @@ function showSettings() {
   showScreen(`<div class="narrow">
     <h2>Settings</h2>
     <p class="note">Saved on this device only.</p>
+    <h3 style="margin-top:18px">Effects</h3>
+    <div class="opt"><span>Impact frames</span><div class="seg"><button data-impact="on" aria-pressed="${impactOn}">On</button><button data-impact="off" aria-pressed="${!impactOn}">Off</button></div></div>
+    <p class="note">The split-second high-contrast flash on big hits. Turn it off if flashing bothers you (it's also off when your system asks for reduced motion).</p>
     <h3 style="margin-top:18px">Online play</h3>
     <p class="note">Online games connect the two players directly. Leave this empty unless your network blocks direct connections and you run your own PeerJS server.</p>
     <div class="opt"><span>Custom PeerJS server</span>${inp('peerHost', settings.peerHost, 'text', 'leave empty to use the free public one')}</div>
@@ -2944,6 +2998,7 @@ screenEl.addEventListener('click', e => {
   }
   if (btn.dataset.netpick) { const keep = {}; screenEl.querySelectorAll('[data-setting]').forEach(i => { keep[i.dataset.setting] = i.value; }); settings.net = btn.dataset.netpick; showSettings(); Object.entries(keep).forEach(([k, v]) => { const i = screenEl.querySelector(`[data-setting="${k}"]`); if (i) i.value = v; }); return; }
   if (btn.dataset.aiult !== undefined) { BUILD.ai.ult = btn.dataset.aiult === '1'; const box = screenEl.querySelector('[data-aiprompt]'); if (box) BUILD.ai.prompt = box.value; showBuild(); return; }
+  if (btn.dataset.impact) { impactOn = btn.dataset.impact === 'on'; try { localStorage.setItem('stick-impact', impactOn ? 'on' : 'off'); } catch (e) {} showSettings(); return; }
   if (btn.dataset.pel) { sideEls[0] = btn.dataset.pel; showPracticeMenu(); return; }
   if (btn.dataset.bel) { BUILD.el = btn.dataset.bel; BUILD.pv = null; BUILD.draft = null; showBuild(); return; }
   if (btn.dataset.prepel) { const [sd, id] = btn.dataset.prepel.split(':'); PREP_PV = null; if (Number(sd) === 0 || opts.mode === 'online') sideEls[0] = id; changeElement(Number(sd), id); return; }
@@ -3112,7 +3167,7 @@ function updateTopbar() {
 function showLogin() {
   state = 'login';
   showScreen(`<div class="home">
-    <div class="logo-mark">STICK<span>V1</span></div>
+    <div class="logo-mark">STICK<span class="vs">v</span><span class="one">1</span></div>
     <p class="hero-sub">Ten elements. Your moves, built by you. Fight a bot or a friend.</p>
     ${!ACC.ready ? '<p class="note">Checking sign-in…</p>' : `<button class="google-btn big" data-action="signin"><span class="g">G</span> Sign in with Google to play</button>
     <p class="note" style="margin-top:14px">Your username and moves are saved to your account.</p>`}
@@ -3125,7 +3180,7 @@ function showMenu() {
   if (needLogin()) { showLogin(); return; }
   if (ACC.user && !ACC.username) { showUsername(); return; }
   showScreen(`<div class="home">
-    <div class="logo-mark">STICK<span>V1</span></div>
+    <div class="logo-mark">STICK<span class="vs">v</span><span class="one">1</span></div>
     <p class="hero-sub">${ACC.username ? `Welcome back, <b>@${esc(ACC.username)}</b>.` : 'Pick an element, fight with the moves you build.'} Head hits score 2, body hits 1.</p>
     <div class="home-cards">
       <button class="home-card primary" data-action="play"><span class="hc-title">Play</span><span class="hc-sub">Bot or a friend online</span></button>

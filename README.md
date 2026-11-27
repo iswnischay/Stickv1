@@ -1,4 +1,6 @@
-# Stick V1
+# Stick v1
+
+*Stick vs 1*: one stick figure against one opponent.
 
 A stick-figure fighting game. Pick one of 10 elements, build four moves and an ultimate with sliders, then fight a bot (which picks its own random element and moves) or anyone online with a 5-letter code.
 
@@ -44,7 +46,7 @@ Open the address it prints (usually http://localhost:5173).
    ```
    git init
    git add .
-   git commit -m "Stick V1"
+   git commit -m "Stick v1"
    git branch -M main
    git remote add origin https://github.com/YOUR-USERNAME/stickv1.git
    git push -u origin main

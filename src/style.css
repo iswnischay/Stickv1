@@ -1,4 +1,4 @@
-/* Stick V1 — deep-ocean night theme: navy depths, soft glass panels, cyan glow. */
+/* Stick v1 (stick vs 1) — deep-ocean night theme: navy depths, soft glass panels, cyan glow. */
 :root {
   color-scheme: dark;
   --paper: #050a14;
@@ -54,7 +54,7 @@ body::before {
 #app { position: relative; max-width: 1400px; margin: 0 auto; padding: 14px 20px 24px; }
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
 .brand { font-family: var(--impact); font-size: 1.7rem; letter-spacing: 0.04em; line-height: 1; }
-.brand span, .logo-mark span { color: var(--glow); text-shadow: 0 0 18px rgba(63, 224, 255, 0.6); margin-left: 0.15em; }
+.brand span, .logo-mark span { color: var(--glow); text-shadow: 0 0 18px rgba(63, 224, 255, 0.6); margin-left: 0.08em; }
 .userchip { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 12px); right: 16px; z-index: 30; display: inline-flex; align-items: center; gap: 8px;
   font-weight: 800; padding: 6px 14px; border-radius: 999px; background: var(--glass); border: 1px solid rgba(63, 224, 255, 0.35);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: 0 0 20px rgba(63, 224, 255, 0.15); }
@@ -118,6 +118,10 @@ button.small { padding: 4px 12px; font-size: 0.88rem; }
   background: linear-gradient(180deg, #ffffff, #a9c8ff); -webkit-background-clip: text; background-clip: text; color: transparent;
   filter: drop-shadow(0 0 30px rgba(63, 224, 255, 0.25)); }
 .logo-mark span { -webkit-text-fill-color: var(--glow); }
+/* "v" is the versus mark: stick VS 1 */
+.brand .vs, .logo-mark .vs { display: inline-block; font-family: var(--display); font-weight: 800; font-style: italic; font-size: 0.55em; vertical-align: 0.42em;
+  margin: 0 0.04em 0 0.12em; color: var(--red); -webkit-text-fill-color: var(--red); text-shadow: 0 0 18px rgba(255, 90, 122, 0.7); transform: rotate(-8deg); }
+.brand .one, .logo-mark .one { margin-left: 0; }
 .hero-sub { margin: 14px auto 34px; max-width: 46ch; }
 .hero-sub b { color: var(--ink); }
 .home-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
