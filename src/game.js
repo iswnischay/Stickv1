@@ -7,7 +7,7 @@ const HEAD_R = 12, GRAV = 2300, JUMP = 900, MOVE = 360;
 const COYOTE = 0.1, JUMP_BUFFER = 0.12, CAST_BUFFER = 0.2;
 const MANA_MAX = 100, MANA_REGEN = 6, MANA_ON_HIT = 5;
 const PLATFORMS = [ { x: 170, y: 420, w: 240 }, { x: 870, y: 420, w: 240 }, { x: 520, y: 290, w: 240 } ];
-const TYPE_BASE = { projectile: 2, beam: 3, burst: 3, zone: 4, dash: 2, shield: 4, rain: 4, strike: 4, orbit: 4, wave: 3, trap: 3, summon: 6 };
+const TYPE_BASE = { projectile: 2, beam: 3, burst: 3, zone: 4, dash: 2, shield: 4, rain: 4, strike: 4, wave: 3, trap: 3, summon: 6 };
 const EFFECT_COST = { blind: 3, pull: 2, push: 1, slow: 2, reflect: 4, homing: 2, curve: 2, pierce: 2 };
 const SHAPES = ['orb', 'spear', 'blade', 'star'];
 const BOT_LEVELS = {
@@ -32,14 +32,14 @@ const EL_IDS = Object.keys(ELEMENTS);
 const mv = (name, type, [damage, speed, size, count, duration], effects, cooldown, mana_overcharge, shape, flavor) =>
   ({ name, type, stats: { damage, speed, size, count, duration }, effects: effects.map(([t, s]) => ({ type: t, strength: s })), cooldown, mana_overcharge, visual: { shape }, flavor });
 const DEFAULTS = {
-  light: [mv('Light Lance', 'beam', [4, 7, 2, 1, 0], [], 3, 0, 'spear', 'A thin golden lance of light.'),
+  light: [mv('Swords of Light', 'projectile', [3, 8, 2, 3, 0], [], 4, 0, 'blade', 'Three swords of light flash into being behind you, lock on, then fire one after another.'),
     mv('Flash', 'burst', [1, 5, 4, 1, 0], [['blind', 2]], 6, 0, 'star', 'A blinding flash: the enemy’s screen goes white, wherever they are.'),
-    mv('Light Step', 'dash', [0, 8, 1, 1, 0], [], 4, 0, 'orb', 'Blink in a puff of sparkles.'),
+    mv('Light Step', 'dash', [0, 8, 1, 1, 0], [], 4, 0, 'orb', 'Teleport in a streak of light, leaving afterimages behind.'),
     mv('Mirror Shield', 'shield', [0, 1, 3, 1, 3], [['reflect', 2]], 7, 0, 'orb', 'A shimmering bubble that throws attacks straight back.'),
-    mv('Judgement', 'strike', [7, 6, 8, 1, 0], [['blind', 2]], 1, 0, 'star', 'A pillar of sunlight slams down where the enemy stands.')],
+    mv('Sword of Judgment', 'strike', [7, 6, 8, 1, 0], [['blind', 2]], 1, 0, 'blade', 'A giant sword of light drops from a circle in the sky and pins the spot where the enemy stands.')],
   wind: [mv('Wind Blades', 'projectile', [2, 8, 1, 2, 0], [['curve', 1]], 2, 0, 'blade', 'Two crescent blades weave through the air.'),
     mv('Gust', 'burst', [0, 6, 5, 1, 0], [['push', 3]], 5, 0, 'orb', 'A shove of air that also bats slow projectiles back.'),
-    mv('Cyclone Guard', 'orbit', [2, 6, 2, 3, 3], [['push', 1]], 7, 0, 'blade', 'Three wind blades circle you and shred anything close.'),
+    mv('Tailwind', 'dash', [1, 9, 1, 1, 0], [['push', 1]], 4, 0, 'orb', 'Ride a gust forward and shove whoever is in the way.'),
     mv('Storm Eye', 'zone', [3, 1, 7, 1, 4], [['pull', 4]], 8, 30, 'orb', 'A tornado that drags the enemy into its centre.'),
     mv('Hurricane', 'zone', [4, 3, 10, 1, 5], [['pull', 5]], 1, 0, 'orb', 'A screaming hurricane that swallows half the arena.')],
   fire: [mv('Fireball', 'projectile', [4, 6, 3, 1, 0], [], 3, 0, 'orb', 'A roaring ball of flame.'),
@@ -65,13 +65,13 @@ const DEFAULTS = {
   antimatter: [mv('Null Orb', 'projectile', [4, 5, 3, 1, 0], [], 4, 0, 'orb', 'An orb that deletes whatever it touches.'),
     mv('Annihilation Beam', 'beam', [5, 8, 1, 1, 0], [], 5, 0, 'spear', 'A thin line of nothing that cuts through shields.'),
     mv('Phase Shift', 'dash', [0, 9, 1, 1, 0], [], 5, 0, 'orb', 'Slip out of reality for an instant.'),
-    mv('Void Ring', 'orbit', [3, 5, 2, 2, 3], [], 7, 0, 'orb', 'Two void orbs circle you, erasing what they touch.'),
+    mv('Collapse', 'strike', [4, 6, 4, 1, 0], [['pull', 2]], 6, 0, 'orb', 'Space caves in where the enemy stands and drags them to the centre.'),
     mv('Singularity', 'zone', [5, 1, 8, 1, 4], [['pull', 5]], 1, 0, 'orb', 'A tiny black hole that eats the battlefield.')],
   steel: [mv('Blade Slash', 'burst', [4, 7, 3, 1, 0], [], 2, 0, 'blade', 'A fast sword arc in front of you.'),
     mv('Thrown Swords', 'projectile', [3, 7, 2, 2, 0], [], 4, 0, 'spear', 'Two swords hurled side by side.'),
     mv('Lunge', 'dash', [3, 8, 1, 1, 0], [], 4, 0, 'orb', 'A stabbing charge that runs right through.'),
     mv('Parry', 'shield', [0, 1, 2, 1, 2], [['reflect', 1]], 6, 0, 'orb', 'A quick guard that knocks attacks back.'),
-    mv('Thousand Blades', 'orbit', [3, 7, 3, 6, 4], [], 1, 0, 'blade', 'Six swords spin around you in a deadly ring.')],
+    mv('Thousand Blades', 'rain', [4, 8, 4, 5, 0], [], 1, 0, 'blade', 'A storm of swords falls from the sky around the enemy.')],
   lightning: [mv('Bolt', 'beam', [4, 9, 1, 1, 0], [], 3, 0, 'spear', 'A crack of lightning straight at the enemy.'),
     mv('Spark Ball', 'projectile', [2, 6, 2, 1, 0], [['homing', 2]], 3, 0, 'star', 'A fizzing ball that chases its target.'),
     mv('Flash Step', 'dash', [1, 10, 1, 1, 0], [], 4, 0, 'orb', 'Move at the speed of a spark.'),
@@ -83,9 +83,9 @@ const DEFAULTS = {
     mv('Blizzard', 'zone', [2, 2, 6, 1, 3], [['slow', 2]], 7, 0, 'orb', 'A drifting snowstorm.'),
     mv('Glacier Spikes', 'wave', [5, 5, 8, 1, 0], [['slow', 4]], 1, 0, 'star', 'A line of ice spikes races along the ground.')]
 };
-const DEFAULT_ULT_DESC = { light: 'A pillar of sunlight crashes down on the enemy and blinds them', wind: 'A hurricane that sucks in the whole arena', fire: 'Meteors rain from the sky around the enemy',
+const DEFAULT_ULT_DESC = { light: 'A giant sword of light falls from the sky onto the enemy and blinds them', wind: 'A hurricane that sucks in the whole arena', fire: 'Meteors rain from the sky around the enemy',
   water: 'A tsunami wave that floods the stage', earth: 'The ground shatters in a wave of rock spikes', darkness: 'Night falls and the enemy goes blind',
-  antimatter: 'A black hole that pulls everything in', steel: 'A thousand swords spin around me', lightning: 'A thunderstorm of lightning bolts from the sky', ice: 'A line of glacier spikes races along the floor' };
+  antimatter: 'A black hole that pulls everything in', steel: 'A thousand swords rain from the sky around the enemy', lightning: 'A thunderstorm of lightning bolts from the sky', ice: 'A line of glacier spikes races along the floor' };
 for (const el of EL_IDS) DEFAULTS[el].forEach((m, i) => { m.element = el; if (i === 4) m.description = DEFAULT_ULT_DESC[el]; });
 
 /* ---------- key bindings ---------- */
@@ -162,6 +162,7 @@ function normalize(r, element, i, errors, warnings) {
   if (typeof r !== 'object' || r === null) r = {};
   const name = String(r.name || `Move ${i + 1}`).slice(0, 26);
   let type = String(r.type || '').toLowerCase();
+  if (type === 'orbit') { type = 'projectile'; warnings.push(`${name}: orbit moves were retired, so this one now fires as a projectile.`); }
   if (!(type in TYPE_BASE)) {
     errors.push(`${name}: type “${r.type ?? ''}” isn’t a move type. Use one of: ${Object.keys(TYPE_BASE).join(', ')}.`);
     type = 'projectile';
@@ -480,13 +481,14 @@ function mkProj(f, m, i, x, y, ang, sp, r, o = {}) {
   const el = o.el || f.element;
   const p = { owner: f, move: m, idx: i, bx: x, by: y, x, y, ang, sp, r, t: 0, phase: o.phase || Math.random() * 6, life: o.life || 2.6,
     homing: o.homing ?? effOf(m, 'homing'), curve: o.curve ?? effOf(m, 'curve'), pierce: o.pierce ?? effOf(m, 'pierce') > 0, hitSet: new Set(),
-    slow: sp <= 600, el, shape: m.visual.shape, g: 0, vx: 0, vy: 0 };
+    slow: sp <= 600, el, shape: o.shape || m.visual.shape, g: 0, vx: 0, vy: 0 };
   if (o.gravity) { p.g = o.gravity; p.vx = Math.cos(ang) * sp; p.vy = Math.sin(ang) * sp; }
   if (castLead > 0) { p.x += Math.cos(ang) * sp * castLead; p.y += Math.sin(ang) * sp * castLead; p.t += castLead; }
   return p;
 }
-const CAST_DUR = { strike: 0.42, rain: 0.42, summon: 0.45, wave: 0.38, burst: 0.32, zone: 0.34, trap: 0.34, orbit: 0.4, beam: 0.34, projectile: 0.26, shield: 0.3, dash: 0.2 };
-const TYPE_IDS = Object.keys(TYPE_BASE);
+const CAST_DUR = { strike: 0.42, rain: 0.42, summon: 0.45, wave: 0.38, burst: 0.32, zone: 0.34, trap: 0.34, beam: 0.34, projectile: 0.26, shield: 0.3, dash: 0.2 };
+// fixed order: these indexes travel over the network (orbit is retired but keeps its slot)
+const TYPE_IDS = ['projectile', 'beam', 'burst', 'zone', 'dash', 'shield', 'rain', 'strike', 'orbit', 'wave', 'trap', 'summon'];
 function canCast(f, i) { const m = f.moves[i]; if (!m || f.blind > 0 || f.stun > 0 || f.dash) return false; return m.ult ? f.ult >= ULT_MAX : (f.cds[i] <= 0 && f.mana >= m.mana_cost); }
 function tryCast(f, i) {
   const m = f.moves[i];
@@ -501,12 +503,26 @@ function tryCast(f, i) {
   else { f.mana -= m.mana_cost; f.cds[i] = m.cooldown; }
   f.stats[i].casts++; f.castType = m.type; f.castUlt = !!m.ult; f.castAnim = f.castDur = CAST_DUR[m.type] || 0.28;
   const st = m.stats, o = opp(f), ang = f.aimAng, cy = chestY(f);
-  if (effOf(m, 'blind') && o && o !== f) { if (o.dodgeT > 0) { if (!o.dodged) { o.dodged = true; addText(o.x, o.y - 112, 'dodged!', elCol(o.element), 24); } } else blindTarget(o, m); }
+  // strikes blind when they land (so the enemy sees it coming); everything else blinds on cast
+  if (effOf(m, 'blind') && o && o !== f && m.type !== 'strike') { if (o.dodgeT > 0) { if (!o.dodged) { o.dodged = true; addText(o.x, o.y - 112, 'dodged!', elCol(o.element), 24); } } else blindTarget(o, m); }
   const ca = Math.cos(ang), sa = Math.sin(ang);
   switch (m.type) {
     case 'projectile': {
       const sp = 200 + st.speed * 80, r = 6 + st.size * 2.2, earth = f.element === 'earth';
       const a0 = earth ? ang + (Math.cos(ang) >= 0 ? -0.28 : 0.28) : ang;
+      // Light swords: they appear in a fan behind your shoulders, lock on to the enemy, then fire one by one
+      if (f.element === 'light' && m.visual.shape === 'blade') {
+        const n = st.count, step = n > 1 ? Math.min(0.62, 2.2 / (n - 1)) : 0;
+        for (let k = 0; k < n; k++) {
+          const th = -Math.PI / 2 - f.face * 0.55 + (k - (n - 1) / 2) * step, hx = Math.cos(th) * 76, hy = Math.sin(th) * 70 - 14;
+          pending.push({ t: k * 0.05, fn: () => {
+            const p = mkProj(f, m, i, f.x + hx, cy + hy, ang, sp * 1.15, r, { phase: k * 1.4 });
+            p.hox = hx; p.hoy = hy; p.hold = Math.max(0.03, 0.24 + k * 0.04 - castLead); p.x = f.x + hx; p.y = chestY(f) + hy;
+            projectiles.push(p); burstParticles(p.x, p.y, 'light', 4, 90);
+          } });
+        }
+        break;
+      }
       for (let k = 0; k < st.count; k++) {
         const off = st.count === 1 ? 0 : (k - (st.count - 1) / 2) * 24;
         const bx = f.x + ca * 24 - sa * off, by = cy + sa * 24 + ca * off;
@@ -516,18 +532,15 @@ function tryCast(f, i) {
     }
     case 'rain': {
       const n = st.count * 2 + 1, spread = 60 + st.size * 16, tx = f.aimX;
-      for (let k = 0; k < n; k++) pending.push({ t: k * 0.08, fn: () => { const x = clamp(tx + (Math.random() - 0.5) * spread * 2, 20, W - 20); projectiles.push(mkProj(f, m, i, x, -20 - Math.random() * 40, Math.PI / 2 + (Math.random() - 0.5) * 0.15, 420 + st.speed * 50, 6 + st.size * 1.6, { life: 2.2, homing: 0, curve: 0 })); } });
+      for (let k = 0; k < n; k++) pending.push({ t: k * 0.08, fn: () => { const x = clamp(tx + (Math.random() - 0.5) * spread * 2, 20, W - 20); projectiles.push(mkProj(f, m, i, x, -20 - Math.random() * 40, Math.PI / 2 + (Math.random() - 0.5) * 0.15, 420 + st.speed * 50, 6 + st.size * 1.6, { life: 2.2, homing: 0, curve: 0, shape: f.element === 'steel' && m.visual.shape === 'blade' ? 'spear' : undefined })); } });
       addText(tx, 90, m.name, elCol(f.element), 20);
       break;
     }
     case 'strike': {
       const r = 34 + st.size * 9, tx = clamp(f.aimX, 30, W - 30), ty = clamp(f.aimY, 90, GROUND - 20);
-      strikes.push({ owner: f, move: m, idx: i, x: tx, y: ty, r, t: 0, delay: Math.max(0.35, 1.15 - st.speed * 0.07), el: f.element });
+      strikes.push({ owner: f, move: m, idx: i, x: tx, y: ty, r, t: 0, delay: Math.max(0.35, 1.15 - st.speed * 0.07), el: f.element, shape: m.visual.shape });
       break;
     }
-    case 'orbit':
-      f.orbit = { t: 1.5 + st.duration, n: Math.max(2, st.count), r: 52 + st.size * 5, or: 6 + st.size * 1.4, spin: 2 + st.speed * 0.5, ang: 0, cd: 0, move: m, idx: i };
-      break;
     case 'wave': {
       const dir = Math.sign(f.aimX - f.x) || f.face;
       waves.push({ owner: f, move: m, idx: i, x: f.x + dir * 24, y: f.onGround ? f.y : GROUND, dir, sp: 260 + st.speed * 55, h: 24 + st.size * 7, t: 0, hit: false, el: f.element });
@@ -587,6 +600,7 @@ function tryCast(f, i) {
         f.y = clamp(f.y + dyv * dist, 100, GROUND);
         if (dyv) { f.vy = 0; f.onGround = f.y >= GROUND; }
         burstParticles(f.x, chestY(f), 'light', 16);
+        fxPush({ kind: 'lstreak', x: ox, y: oy, x1: f.x, y1: f.y, face: f.face, el: 'light', life: 0.45, max: 0.45 });
         f.invuln = Math.max(f.invuln, 0.25);
         if (st.damage > 0 && distPointSeg(o.x, chestY(o), ox, oy - 40, f.x, f.y - 40) < 40) registerHit(f, o, i, false, m, ox);
       } else {
@@ -633,7 +647,6 @@ function botThink(f, dt) {
       else if (m.type === 'burst') s = dist < 50 + m.stats.size * 15 ? 4 : 0;
       else if (m.type === 'zone') s = dist > 120 && dist < 420 ? 2.2 : 0.2;
       else if (m.type === 'rain' || m.type === 'strike') s = 2.3;
-      else if (m.type === 'orbit') s = f.orbit ? 0 : dist < 170 ? 3.5 : threat ? 2.6 : 0.4;
       else if (m.type === 'wave') s = o.onGround && Math.abs(o.y - f.y) < 12 ? 2.6 : 0.2;
       else if (m.type === 'trap') s = dist < 320 ? 1.9 : 0.6;
       else if (m.type === 'summon') s = summons.some(x => x.owner === f) ? 0 : 2.4;
@@ -767,6 +780,14 @@ function updateProjectiles(dt) {
   for (const p of projectiles) {
     p.t += dt; p.life -= dt;
     const tgt = opp(p.owner);
+    if (p.hold > 0) { // a light sword hanging behind its caster, turning to face the enemy
+      p.hold -= dt; p.life += dt;
+      const ow = p.owner; p.x = p.bx = ow.x + p.hox; p.y = p.by = chestY(ow) + p.hoy;
+      p.ang = Math.atan2(chestY(tgt) - 10 - p.y, tgt.x - p.x);
+      if (Math.random() < 0.3) spawnP(p.x, p.y, 'light', (Math.random() - 0.5) * 50, (Math.random() - 0.5) * 50, 0.3, 2);
+      if (p.hold <= 0) { burstParticles(p.x, p.y, 'light', 6, 160); fxPush({ kind: 'impact', x: p.x, y: p.y, r: 18, el: 'light', life: 0.16, max: 0.16, rot: p.ang }); }
+      continue;
+    }
     if (p.homing) {
       const ta = Math.atan2(chestY(tgt) - 10 - p.by, tgt.x - p.bx);
       let d = ta - p.ang; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
@@ -776,7 +797,7 @@ function updateProjectiles(dt) {
     else { p.bx += Math.cos(p.ang) * p.sp * dt; p.by += Math.sin(p.ang) * p.sp * dt; }
     const off = p.curve ? Math.sin(p.t * 7 + p.phase) * (16 + 10 * p.curve) : p.el === 'lightning' ? (hash(Math.floor(p.t * 22) + p.phase * 13) - 0.5) * 16 : 0;
     p.x = p.bx - Math.sin(p.ang) * off; p.y = p.by + Math.cos(p.ang) * off;
-    if (Math.random() < 0.6) trailParticle(p.x, p.y, p.el, p.ang, p.sp);
+    if (Math.random() < (p.el === 'light' && p.shape === 'blade' ? 0.9 : 0.6)) trailParticle(p.x, p.y, p.el, p.ang, p.sp);
     if (p.x < -40 || p.x > W + 40 || p.y < -60) p.life = 0;
     if (p.y > GROUND - 2) { p.life = 0; burstParticles(p.x, GROUND - 4, p.el, 5, 120); }
     if (p.life <= 0 || p.hitSet.has(tgt)) continue;
@@ -801,9 +822,9 @@ function updateProjectiles(dt) {
   }
   // element clashes between projectiles
   for (let a = 0; a < projectiles.length; a++) {
-    const p = projectiles[a]; if (p.life <= 0) continue;
+    const p = projectiles[a]; if (p.life <= 0 || p.hold > 0) continue;
     for (let b = a + 1; b < projectiles.length; b++) {
-      const q = projectiles[b]; if (q.life <= 0 || q.owner === p.owner) continue;
+      const q = projectiles[b]; if (q.life <= 0 || q.owner === p.owner || q.hold > 0) continue;
       if (Math.hypot(p.x - q.x, p.y - q.y) > p.r + q.r) continue;
       clashProjectiles(p, q);
     }
@@ -916,8 +937,10 @@ function updateExtras(dt) {
     s.t += dt;
     if (!s.done && s.t >= s.delay) {
       s.done = true; const o = opp(s.owner);
+      if (s.move && effOf(s.move, 'blind') && o && o !== s.owner) { if (o.dodgeT > 0) { if (!o.dodged) { o.dodged = true; addText(o.x, o.y - 112, 'dodged!', elCol(o.element), 24); } } else blindTarget(o, s.move); }
       if (Math.hypot(o.x - s.x, chestY(o) - s.y) < s.r + 14) registerHit(s.owner, o, s.idx, false, s.move, s.x);
       flashes.push({ x: s.x, y: s.y, r: s.r, el: s.el, life: 0.45, max: 0.45, kind: 'strike' });
+      if (s.el === 'light' && s.shape === 'blade') { fxPush({ kind: 'lsword', x: s.x, y: s.y, r: s.r, el: 'light', life: 0.8, max: 0.8 }); shake = Math.max(shake, 12); }
       burstParticles(s.x, s.y, s.el, 26, 340); shake = Math.max(shake, 7);
     }
   }
@@ -1217,6 +1240,16 @@ function drawProjectileShape(el, r, t, shape, vis) {
       ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(-L * 0.3, -r * 0.9); ctx.lineTo(-L * 0.3, r * 0.9); ctx.moveTo(-L * 0.3, 0); ctx.lineTo(-L * 0.7, 0); ctx.stroke(); break;
     }
     case 'light':
+      if (shape === 'blade') { drawLightSword(r); break; }
+      if (shape === 'spear') { // a lance of light
+        glowOn(); ctx.fillStyle = col; ctx.globalAlpha *= 0.3; ctx.beginPath(); ctx.ellipse(-r * 0.4, 0, r * 3, r * 1.1, 0, 0, 7); ctx.fill(); ctx.globalAlpha /= 0.3;
+        ctx.fillStyle = EL2.light; ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(r * 2.4, 0); ctx.lineTo(0, -r * 0.42); ctx.lineTo(-r * 2.6, 0); ctx.lineTo(0, r * 0.42); ctx.closePath(); ctx.fill(); ctx.stroke(); glowOff(); break;
+      }
+      if (shape === 'orb') { // a small sun with turning rays
+        glowOn(); ctx.fillStyle = col; ctx.globalAlpha *= 0.3; ctx.beginPath(); ctx.arc(0, 0, r * 2.2, 0, 7); ctx.fill(); ctx.globalAlpha /= 0.3;
+        ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath(); for (let q = 0; q < 8; q++) { const an = q / 8 * Math.PI * 2 + t * 3; ctx.moveTo(Math.cos(an) * r * 1.2, Math.sin(an) * r * 1.2); ctx.lineTo(Math.cos(an) * r * 1.9, Math.sin(an) * r * 1.9); } ctx.stroke();
+        ctx.fillStyle = col; ctx.beginPath(); ctx.arc(0, 0, r, 0, 7); ctx.fill(); ctx.fillStyle = EL2.light; ctx.beginPath(); ctx.arc(0, 0, r * 0.6, 0, 7); ctx.fill(); glowOff(); break;
+      }
       glowOn(); ctx.fillStyle = col; ctx.globalAlpha *= 0.35; ctx.beginPath(); ctx.arc(0, 0, r * 2.4, 0, 7); ctx.fill(); ctx.globalAlpha /= 0.35;
       ctx.fillStyle = col; starPath(r * 1.8, r * 0.5, 4, t * 6); ctx.fill(); ctx.fillStyle = EL2.light; ctx.beginPath(); ctx.arc(0, 0, r * 0.6, 0, 7); ctx.fill(); glowOff(); break;
     default: // wind
@@ -1224,7 +1257,41 @@ function drawProjectileShape(el, r, t, shape, vis) {
       ctx.strokeStyle = EL2.wind; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(-r * 0.4, 0, r * 1.5, -0.9, 0.9); ctx.stroke();
   }
 }
+// A sword of light pointing along +x with its tip a little ahead of the origin: white blade, gold edge,
+// winged guard, a glint that runs up the blade. ring > 0 adds the summoning circle behind the hilt.
+function drawLightSword(r, a = 1, k = 1, ring = 0) {
+  const col = elCol('light'), L = r * 4.2, w = r * 0.34, tip = r * 1.6, base = tip - L, bs = base + r * 0.9;
+  ctx.save(); if (k !== 1) ctx.scale(k, k);
+  const a0 = ctx.globalAlpha;
+  if (ring > 0) {
+    ctx.save(); ctx.translate(base - r * 0.3, 0); ctx.scale(0.32, 1); ctx.globalAlpha = a0 * a * ring; ctx.strokeStyle = col; ctx.lineWidth = 2.4;
+    ctx.beginPath(); ctx.arc(0, 0, r * 1.7, 0, 7); ctx.stroke(); ctx.lineWidth = 1.4; ctx.beginPath(); ctx.arc(0, 0, r * 1.25, 0, 7); ctx.stroke();
+    ctx.beginPath(); for (let q = 0; q < 8; q++) { const an = q / 8 * Math.PI * 2 + clock * 3; ctx.moveTo(Math.cos(an) * r * 1.25, Math.sin(an) * r * 1.25); ctx.lineTo(Math.cos(an) * r * 1.7, Math.sin(an) * r * 1.7); } ctx.stroke();
+    ctx.restore();
+  }
+  glowOn();
+  ctx.globalAlpha = a0 * a * 0.2; ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(base + L * 0.55, 0, L * 0.58, w * 2.1, 0, 0, 7); ctx.fill();
+  ctx.globalAlpha = a0 * a; ctx.lineJoin = 'round';
+  // blade
+  ctx.fillStyle = EL2.light; ctx.strokeStyle = col; ctx.lineWidth = Math.max(1.6, r * 0.16);
+  ctx.beginPath(); ctx.moveTo(tip, 0); ctx.lineTo(tip - L * 0.2, -w); ctx.lineTo(bs, -w * 0.85); ctx.lineTo(bs, w * 0.85); ctx.lineTo(tip - L * 0.2, w); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.max(1, w * 0.45); ctx.beginPath(); ctx.moveTo(bs + r * 0.25, 0); ctx.lineTo(tip - L * 0.18, 0); ctx.stroke();
+  // guard, grip, pommel
+  ctx.fillStyle = col; ctx.strokeStyle = EL2.light; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.moveTo(bs + r * 0.3, -w * 1.1); ctx.lineTo(bs - r * 0.05, -w * 3.4); ctx.lineTo(bs - r * 0.3, -w * 1.1); ctx.lineTo(bs - r * 0.3, w * 1.1); ctx.lineTo(bs - r * 0.05, w * 3.4); ctx.lineTo(bs + r * 0.3, w * 1.1); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = col; ctx.lineWidth = w * 1.2; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(bs - r * 0.3, 0); ctx.lineTo(base + r * 0.15, 0); ctx.stroke();
+  ctx.save(); ctx.translate(base, 0); ctx.fillStyle = EL2.light; ctx.strokeStyle = col; ctx.lineWidth = 1.4; starPath(r * 0.42, r * 0.2, 4); ctx.fill(); ctx.stroke(); ctx.restore();
+  // a glint racing up the blade
+  const gx = bs + ((clock * 1.7 + r * 0.37) % 1) * (tip - bs); ctx.save(); ctx.translate(gx, 0); ctx.fillStyle = '#ffffff'; starPath(r * 0.6, r * 0.1, 4, 0.3); ctx.fill(); ctx.restore();
+  glowOff(); ctx.restore();
+}
 function drawProjectile(p) {
+  if (p.el === 'light' && p.shape === 'blade') {
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.ang);
+    const held = p.hold > 0 || p.held;
+    drawLightSword(p.r * 1.6, 1, held ? clamp((p.t || 1) / 0.12, 0.2, 1) : 1, held ? 1 : 0);
+    ctx.restore(); return;
+  }
   ctx.save();
   if (p.el === 'darkness') { const t = opp(p.owner); ctx.globalAlpha = clamp((320 - Math.hypot(p.x - t.x, p.y - chestY(t))) / 220, 0.12, 1); }
   ctx.translate(p.x, p.y); ctx.rotate(p.ang);
@@ -1300,7 +1367,17 @@ function drawRing(rg) {
     glowOn(); for (let q = 0; q < 8; q++) { const a = q / 8 * 7 + rg.max; jagged(0, 0, Math.cos(a) * R, Math.sin(a) * R, 16, 14); ctx.strokeStyle = q % 2 ? col : EL2.lightning; ctx.lineWidth = 2.5; ctx.stroke(); } glowOff();
   } else if (el === 'ice' || el === 'earth') {
     for (let q = 0; q < 10; q++) { const a = q / 10 * Math.PI * 2; ctx.save(); ctx.rotate(a); ctx.fillStyle = el === 'ice' ? EL2.ice : col; ctx.strokeStyle = el === 'ice' ? col : C.ink; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(R * 0.4, -6); ctx.lineTo(R, 0); ctx.lineTo(R * 0.4, 6); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore(); }
-  } else if (el === 'fire' || el === 'darkness' || el === 'light') {
+  } else if (el === 'light') { // lens flare: a white core, long rays that spin out and a bright ring
+    glowOn();
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, R); g.addColorStop(0, EL2.light); g.addColorStop(0.45, withA(col, 0.8)); g.addColorStop(1, withA(col, 0));
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, R, 0, 7); ctx.fill();
+    ctx.rotate(k * 0.7); ctx.fillStyle = col;
+    for (let q = 0; q < 12; q++) { const an = q / 12 * Math.PI * 2, L = R * (q % 3 === 0 ? 1.6 : q % 2 ? 1.05 : 1.25), wd = q % 3 === 0 ? 0.07 : 0.045;
+      ctx.beginPath(); ctx.moveTo(Math.cos(an - wd) * R * 0.18, Math.sin(an - wd) * R * 0.18); ctx.lineTo(Math.cos(an) * L, Math.sin(an) * L); ctx.lineTo(Math.cos(an + wd) * R * 0.18, Math.sin(an + wd) * R * 0.18); ctx.closePath(); ctx.fill(); }
+    ctx.strokeStyle = EL2.light; ctx.lineWidth = 5 * (1 - k) + 1; ctx.beginPath(); ctx.arc(0, 0, R * 1.05, 0, 7); ctx.stroke();
+    ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0, 0, R * 1.05 + 4, 0, 7); ctx.stroke();
+    glowOff();
+  } else if (el === 'fire' || el === 'darkness') {
     if (el !== 'darkness') glowOn();
     const g = ctx.createRadialGradient(0, 0, 0, 0, 0, R); g.addColorStop(0, el === 'darkness' ? EL2.darkness : EL2[el]); g.addColorStop(0.5, col); g.addColorStop(1, withA(col, 0));
     ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, R, 0, 7); ctx.fill(); glowOff();
@@ -1320,7 +1397,25 @@ function drawStrike(s) {
   ctx.globalAlpha = 1;
   if (s.el === 'fire' || s.el === 'earth') { const y = -(1 - p) * (s.y + 60); ctx.save(); ctx.translate(0, y); ctx.rotate(1.57); drawProjectileShape(s.el, 10 + s.r * 0.12, clock, 'orb'); ctx.restore(); }
   else if (s.el === 'steel') { const y = -(1 - p) * (s.y + 80) - 30; ctx.save(); ctx.translate(0, y); ctx.rotate(1.57); drawProjectileShape('steel', 16, 0, 'spear'); ctx.restore(); }
+  else if (s.el === 'light' && s.shape === 'blade') drawJudgmentSword(s, p);
   ctx.restore();
+}
+// Sword of Judgment: a summoning circle opens in the sky over the mark, a giant sword of light hangs in it,
+// then drops (slow at first, then all at once) and lands point-first on the mark.
+function drawJudgmentSword(s, p) {
+  const col = elCol('light'), R = s.r, big = R * 0.55, skyY = -s.y + 46;
+  // the sword slides out of the circle, trembles, then drops (slow at first, then all at once)
+  const out = clamp(p / 0.35, 0, 1), e = p < 0.55 ? 0 : Math.pow((p - 0.55) / 0.45, 2.2), trem = p > 0.35 && p < 0.55 ? Math.sin(clock * 70) * 2 : 0;
+  const hang = skyY + big * (0.6 + 2.4 * (1 - Math.pow(1 - out, 3))), tipY = hang + e * (R * 0.3 - hang);
+  if (e > 0.15) { ctx.save(); glowOn(); ctx.globalAlpha = e * 0.45; ctx.strokeStyle = col; ctx.lineWidth = big * 0.3; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(0, skyY); ctx.lineTo(0, tipY - big * 3.4); ctx.stroke(); glowOff(); ctx.restore(); }
+  ctx.save(); ctx.translate(trem, tipY - big * 1.6); ctx.rotate(Math.PI / 2); drawLightSword(big, clamp(p * 4, 0, 1)); ctx.restore();
+  // the circle in the sky, seen from below, drawn over the hilt so the sword seems to come out of it
+  ctx.save(); ctx.translate(0, skyY); ctx.globalAlpha = clamp(p * 5, 0, 1) * (p > 0.8 ? Math.max(0, (1 - p) / 0.2) : 1); glowOn();
+  ctx.fillStyle = withA(EL2.light, 0.55); ctx.beginPath(); ctx.ellipse(0, 0, R * 0.8, R * 0.19, 0, 0, 7); ctx.fill();
+  ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(0, 0, R * 1.1, R * 0.26, 0, 0, 7); ctx.stroke();
+  ctx.lineWidth = 1.5; ctx.beginPath(); ctx.ellipse(0, 0, R * 0.8, R * 0.19, 0, 0, 7); ctx.stroke();
+  ctx.beginPath(); for (let q = 0; q < 12; q++) { const an = q / 12 * Math.PI * 2 + clock * 1.5; ctx.moveTo(Math.cos(an) * R * 0.8, Math.sin(an) * R * 0.19); ctx.lineTo(Math.cos(an) * R * 1.1, Math.sin(an) * R * 0.26); } ctx.stroke();
+  glowOff(); ctx.restore();
 }
 function drawFlash(fl) {
   const col = elCol(fl.el), k = 1 - fl.life / fl.max, a = 1 - k;
@@ -1625,6 +1720,20 @@ function stepDrawFx() {
     if (e.kind === 'ring') {
       ctx.globalAlpha = (1 - k) * 0.8; ctx.strokeStyle = col; ctx.lineWidth = 3 * (1 - k) + 1;
       ctx.beginPath(); ctx.ellipse(0, 0, e.r * (0.3 + k), e.r * (0.3 + k) * 0.22, 0, 0, 7); ctx.stroke();
+    } else if (e.kind === 'lstreak') { // Light Step: a streak of light with fading afterimages along the path
+      const dx = e.x1 - e.x, dy = e.y1 - e.y; glowOn();
+      ctx.lineCap = 'round'; ctx.strokeStyle = col; ctx.globalAlpha = (1 - k) * 0.35; ctx.lineWidth = 26 * (1 - k) + 2;
+      ctx.beginPath(); ctx.moveTo(0, -40); ctx.lineTo(dx, dy - 40); ctx.stroke();
+      ctx.strokeStyle = EL2.light; ctx.globalAlpha = 1 - k; ctx.lineWidth = 7 * (1 - k) + 1; ctx.stroke();
+      for (let q = 1; q <= 3; q++) { const u = q / 4, gx = dx * u, gy = dy * u; ctx.globalAlpha = (1 - k) * (0.2 + u * 0.45); ctx.strokeStyle = col; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(gx, gy - 68, 11, 0, 7); ctx.moveTo(gx, gy - 56); ctx.lineTo(gx, gy - 24); ctx.lineTo(gx - 10 * e.face, gy); ctx.moveTo(gx, gy - 24); ctx.lineTo(gx + 9 * e.face, gy);
+        ctx.moveTo(gx, gy - 48); ctx.lineTo(gx - 14 * e.face, gy - 36); ctx.moveTo(gx, gy - 48); ctx.lineTo(gx + 13 * e.face, gy - 40); ctx.stroke(); }
+      glowOff();
+    } else if (e.kind === 'lsword') { // the Sword of Judgment stays planted for a moment, then fades upward into light
+      const big = e.r * 0.55; ctx.globalAlpha = 1 - k;
+      ctx.save(); ctx.translate(0, e.r * 0.3 - big * 1.6 - k * 30); ctx.rotate(Math.PI / 2); drawLightSword(big, 1 - k); ctx.restore();
+      glowOn(); ctx.strokeStyle = col; ctx.lineWidth = 4 * (1 - k) + 1; ctx.globalAlpha = (1 - k) * 0.8;
+      ctx.beginPath(); ctx.ellipse(0, e.r * 0.3, e.r * (0.4 + k * 1.2), e.r * (0.4 + k * 1.2) * 0.22, 0, 0, 7); ctx.stroke(); glowOff();
     } else if (e.kind === 'impact') {
       ctx.rotate(e.rot); glowOn();
       ctx.globalAlpha = 1 - k; ctx.fillStyle = k < 0.25 ? (isDark ? '#ffffff' : C.paper) : col;
@@ -2421,12 +2530,12 @@ function buildSnap() {
     b: beams.map(b => { const e = b.x1 === undefined ? rayEnd(b.x0, b.y0, b.ang) : { x: b.x1, y: b.y1 }; return [Math.round(b.x0), Math.round(b.y0), Math.round(e.x), Math.round(e.y), Math.round(b.thick), EL_INDEX[b.el], b.windup > 0 ? 1 : 0, r1(b.life)]; }),
     rg: rings.map(r => [Math.round(r.x), Math.round(r.y), Math.round(r.r), EL_INDEX[r.el], r1(r.life), r1(r.max), r.arc || 0]),
     ev: NET.events.slice(), p: [],
-    sk: strikes.map(k => [Math.round(k.x), Math.round(k.y), Math.round(k.r), EL_INDEX[k.el], r1(k.t), r1(k.delay)]),
+    sk: strikes.map(k => [Math.round(k.x), Math.round(k.y), Math.round(k.r), EL_INDEX[k.el], r1(k.t), r1(k.delay), SHAPE_INDEX[k.shape] || 0]),
     wv: waves.map(w => [Math.round(w.x), Math.round(w.y), Math.round(w.h), EL_INDEX[w.el], w.dir]),
     tp: traps.map(t => [Math.round(t.x), Math.round(t.y), Math.round(t.r), EL_INDEX[t.el], r1(t.age), t.owner.slot]),
     sm: summons.map(m => [Math.round(m.x), Math.round(m.y), EL_INDEX[m.el], m.owner.slot, r1(m.life)]),
     fl: flashes.map(x => [Math.round(x.x), Math.round(x.y), Math.round(x.r), EL_INDEX[x.el], r1(x.life), r1(x.max), x.kind === 'strike' ? 1 : 0]) };
-  const P = projectiles.map(p => [Math.round(p.x), Math.round(p.y), r1(p.ang), Math.round(p.sp), Math.round(p.r), EL_INDEX[p.el], SHAPE_INDEX[p.shape] || 0, p.owner.slot]);
+  const P = projectiles.map(p => [Math.round(p.x), Math.round(p.y), r1(p.ang), p.hold > 0 ? 0 : Math.round(p.sp), Math.round(p.r), EL_INDEX[p.el], SHAPE_INDEX[p.shape] || 0, p.owner.slot, p.hold > 0 ? 1 : 0]);
   snap.p = P;
   while (JSON.stringify(snap).length > 3700 && snap.p.length) snap.p.pop();
   while (JSON.stringify(snap).length > 3800 && snap.ev.length) snap.ev.shift();
@@ -2495,12 +2604,12 @@ function applyEntities(s) {
   zones = (s.z || []).map(z => ({ x: z[0], y: z[1], r: z[2], el: el(z[3]), life: z[4], max: z[5], spin: z[6], owner: fighters[0], view: true }));
   beams = (s.b || []).map(b => ({ x0: b[0], y0: b[1], x1: b[2], y1: b[3], ang: Math.atan2(b[3] - b[1], b[2] - b[0]), thick: b[4], el: el(b[5]), windup: b[6] ? 0.05 : 0, life: b[7], view: true }));
   rings = (s.rg || []).map(r => ({ x: r[0], y: r[1], r: r[2], el: el(r[3]), life: r[4], max: r[5], arc: r[6] }));
-  strikes = (s.sk || []).map(k => ({ x: k[0], y: k[1], r: k[2], el: el(k[3]), t: k[4], delay: k[5] || 1 }));
+  strikes = (s.sk || []).map(k => ({ x: k[0], y: k[1], r: k[2], el: el(k[3]), t: k[4], delay: k[5] || 1, shape: SHAPES[k[6]] || 'orb' }));
   waves = (s.wv || []).map(w => ({ x: w[0], y: w[1], h: w[2], el: el(w[3]), dir: w[4] < 0 ? -1 : 1 }));
   traps = (s.tp || []).map(t => ({ x: t[0], y: t[1], r: t[2], el: el(t[3]), age: t[4], owner: fighters[t[5]] || fighters[0] }));
   summons = (s.sm || []).map(m => ({ x: m[0], y: m[1], el: el(m[2]), owner: fighters[m[3]] || fighters[0], life: m[4] }));
   flashes = (s.fl || []).map(x => ({ x: x[0], y: x[1], r: x[2], el: el(x[3]), life: x[4], max: x[5] || 0.4, kind: x[6] ? 'strike' : 'burst' }));
-  projectiles = (s.p || []).map(p => ({ x: p[0], y: p[1], ang: p[2], sp: p[3], r: p[4], el: el(p[5]), shape: SHAPES[p[6]] || 'orb', owner: fighters[p[7]] || fighters[0], t: 0 }));
+  projectiles = (s.p || []).map(p => ({ x: p[0], y: p[1], ang: p[2], sp: p[3], r: p[4], el: el(p[5]), shape: SHAPES[p[6]] || 'orb', owner: fighters[p[7]] || fighters[0], t: 1, held: p[8] === 1 }));
   (s.ev || []).forEach(e => {
     if (!Array.isArray(e) || e[0] <= NET.seenEv) return;
     NET.seenEv = e[0];
@@ -2683,7 +2792,6 @@ Map the ultimate onto the one building block ("type") that best matches the idea
 - rain: many things falling from the sky around the target (meteors, arrows, bolts). "count" adds drops, "size" widens the area.
 - strike: a marked circle at the target that blasts after a short delay (a pillar of light, a lightning strike, an eruption, a falling sword).
 - wave: something racing along the ground (tsunami, spikes, shockwave); "size" is its height and jumping dodges it.
-- orbit: things spinning around the caster for "duration" seconds that hit anyone close ("count" of them).
 - summon: a floating helper or creature that keeps shooting at the enemy for "duration".
 - trap: a hidden mine or rune that explodes when the enemy steps on it.
 - zone: a lingering area near the target for "duration" seconds (storm, black hole, fire field); scores once per second inside.
@@ -2695,7 +2803,7 @@ Map the ultimate onto the one building block ("type") that best matches the idea
 
 Effects, 0 to 2, strength 1 to 5: blind (enemy can’t use moves for a moment), pull, push, slow, reflect (shields only), homing (projectiles), curve (projectiles weave and slip around shields), pierce (projectiles keep going after a hit).
 Stats are integers: damage 0-10 (0 means effect only and scores no points), speed 1-10, size 1-10, count 1-6, duration 0-5.
-Cost: build = type base (projectile 2, dash 2, beam 3, burst 3, wave 3, trap 3, zone 4, shield 4, rain 4, strike 4, orbit 4, summon 6) + damage×2 + speed + size + (count−1)×3 + duration + effect costs (push 1, pull 2, slow 2, homing 2, curve 2, pierce 2, blind 3, reflect 4, each times its strength). The ultimate must cost ${ULT_BUDGET} build points or fewer, so choose what matters most for the idea. If the description asks for something unfair (instant win, invincibility), keep its spirit in a fair form and explain briefly in "note"; otherwise leave "note" empty.
+Cost: build = type base (projectile 2, dash 2, beam 3, burst 3, wave 3, trap 3, zone 4, shield 4, rain 4, strike 4, summon 6) + damage×2 + speed + size + (count−1)×3 + duration + effect costs (push 1, pull 2, slow 2, homing 2, curve 2, pierce 2, blind 3, reflect 4, each times its strength). The ultimate must cost ${ULT_BUDGET} build points or fewer, so choose what matters most for the idea. If the description asks for something unfair (instant win, invincibility), keep its spirit in a fair form and explain briefly in "note"; otherwise leave "note" empty.
 
 ${invent ? `Invent an ultimate for a ${El} fighter with the theme “${theme}”. In "description", write the idea the way a player would type it.` : `The player’s description: ${JSON.stringify(desc)}`}
 
@@ -2764,8 +2872,8 @@ function newPlan(el) {
 const BOT_ROLES = [
   ['projectile', 'beam'],
   ['burst', 'zone', 'wave', 'trap', 'strike', 'rain', 'projectile', 'beam'],
-  ['dash', 'shield', 'orbit'],
-  ['summon', 'strike', 'rain', 'zone', 'trap', 'wave', 'burst', 'orbit', 'projectile']
+  ['dash', 'shield'],
+  ['summon', 'strike', 'rain', 'zone', 'trap', 'wave', 'burst', 'projectile']
 ];
 const BOT_WORDS = {
   light: ['Solar', 'Radiant', 'Prism', 'Halo', 'Dawn'], wind: ['Gale', 'Zephyr', 'Cyclone', 'Gust', 'Sky'],
@@ -2776,7 +2884,7 @@ const BOT_WORDS = {
 };
 const BOT_NOUNS = { projectile: ['Bolt', 'Shot', 'Shard', 'Volley'], beam: ['Ray', 'Lance', 'Beam'], burst: ['Burst', 'Nova', 'Pulse'],
   zone: ['Field', 'Pool', 'Vortex'], dash: ['Step', 'Rush', 'Blink'], shield: ['Ward', 'Guard', 'Barrier'], rain: ['Rain', 'Storm', 'Barrage'],
-  strike: ['Strike', 'Hammer', 'Pillar'], orbit: ['Halo', 'Ring', 'Orbit'], wave: ['Wave', 'Surge', 'Quake'], trap: ['Mine', 'Snare', 'Rune'], summon: ['Sentinel', 'Familiar', 'Drone'] };
+  strike: ['Strike', 'Hammer', 'Pillar'], wave: ['Wave', 'Surge', 'Quake'], trap: ['Mine', 'Snare', 'Rune'], summon: ['Sentinel', 'Familiar', 'Drone'] };
 const pick = a => a[Math.floor(Math.random() * a.length)];
 const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 function botMoveName(el, type, used) {
@@ -3412,7 +3520,6 @@ const TYPE_HINTS = {
   shield: 'A bubble that blocks projectiles and beams. Duration is how long it lasts.',
   rain: 'Drops fall from the sky around the target. Count adds drops; size widens the area.',
   strike: 'A marked circle at the target that blasts after a delay. Faster speed means a shorter delay.',
-  orbit: 'Things circle you for a few seconds, hitting anyone close and blocking projectiles.',
   wave: 'Travels along the ground. Size is its height. Jumping dodges it.',
   trap: 'A hidden rune on the ground that blows up when the enemy steps on it.',
   summon: 'A floating helper that shoots at the enemy on its own. Speed fires faster.'
@@ -3528,7 +3635,7 @@ function showPrep() {
       <p><code>build = type base + damage×2 + speed + size + (count−1)×3 + duration + effect costs − cooldown discount − overcharge discount</code></p>
       <p><code>mana per cast = 5 + build×0.6 + overcharge</code>. Your four moves share ${REG_BUDGET} build points and one move can cost at most 60 mana. Mana refills 6 per second, plus 5 for every scoring hit. The ultimate has its own ${ULT_BUDGET}-point budget, costs no mana and fires when its meter fills (slowly over time, faster when you score).</p>
       <ul>
-        <li>Type base: projectile 2, dash 2, beam 3, burst 3, wave 3, trap 3, zone 4, shield 4, rain 4, strike 4, orbit 4, summon 6.</li>
+        <li>Type base: projectile 2, dash 2, beam 3, burst 3, wave 3, trap 3, zone 4, shield 4, rain 4, strike 4, summon 6.</li>
         <li>Effect cost per strength point: push 1, pull 2, slow 2, homing 2, curve 2, pierce 2, blind 3, reflect 4.</li>
         <li>Cooldown discount: 1 point per second above 3. Overcharge discount: 3 points per 10 extra mana.</li>
         ${EL_IDS.map(id => `<li><b>${ELEMENTS[id].name}:</b> ${esc(ELEMENTS[id].passive)}</li>`).join('')}
@@ -4225,7 +4332,7 @@ function startPreview(m, el) {
   resetFighter(caster, moves); resetFighter(dummy, []);
   caster.isBot = false; dummy.dummy = true; caster.aimMode = 'auto';
   fighters = [caster, dummy]; PV.slot = m.ult ? 4 : 0;
-  PV.period = ['zone', 'summon', 'orbit', 'trap', 'shield'].includes(m.type) ? 3.6 : m.ult ? 3.2 : 2.4; PV.t = 0.25;
+  PV.period = ['zone', 'summon', 'trap', 'shield'].includes(m.type) ? 3.6 : m.ult ? 3.2 : 2.4; PV.t = 0.25;
   PV.on = true; paused = false; clearArena();
 }
 function previewUpdate(dt) {
