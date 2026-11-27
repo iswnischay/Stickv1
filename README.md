@@ -19,6 +19,16 @@ Setup (once):
 2. Firestore Database → Rules: paste the contents of `firestore.rules` and **Publish**.
 3. Get a free Gemini key at aistudio.google.com and add it as the repository secret `GEMINI_API_KEY`. The workflow hands it to the Cloudflare relay; it never appears in the web page.
 
+## Doolers
+
+Doolers are the in-game currency (shown with a gold **d**). New players start with 100.
+
+- **Beat the bot:** Easy 30 · Normal 60 · Hard 100 (wins only; at least a minute between rewards, 800 a day max).
+- **Beat a friend online:** +50, of which 25 comes from the loser's balance and 25 from the game. Both games report the result and doolers only move when they agree. If the loser closes the game, the winner still gets the game's 25 after 90 seconds.
+- **Spend:** keeping a move built by the AI costs 100. Without enough doolers you can save it as a draft, keep improving it with the AI, and pay for it later. Slider edits stay free.
+
+Balances live on the Cloudflare relay (one record per player), not in the browser, so they can't be edited from the page.
+
 ## Folder layout
 
 - `index.html`, `src/` — the game (`src/game.js` is the code, `src/style.css` the styles)

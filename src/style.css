@@ -401,3 +401,14 @@ body.has-screen .topbar { visibility: hidden; }
 .loadout li { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .loadout .slotkey { min-width: 1.8em; }
 .loop-error { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 60; max-width: min(720px, 92vw); padding: 10px 14px; border-radius: 10px; background: #b3122e; color: #fff; font: 600 14px var(--display); cursor: pointer; }
+
+/* ---------- doolers ---------- */
+.dl { display: inline-flex; align-items: center; gap: 0.25em; font-weight: 800; white-space: nowrap; }
+.dl::before { content: "d"; display: inline-grid; place-items: center; width: 1.25em; height: 1.25em; border-radius: 50%; font: 800 0.75em/1 var(--display);
+  color: #3a2600; background: radial-gradient(circle at 35% 30%, #ffe9a3, #f2b928 60%, #c98a00); box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.25); }
+.dl-result { margin-top: 14px; font-size: 1.05rem; }
+.dl-result.win { color: var(--light); font-weight: 700; }
+.dl-result.lose { color: var(--red); font-weight: 700; }
+.dl-result.err { color: var(--red); }
+.buy-row .cta .dl::before { color: #3a2600; }
+.draft-card { border-style: dashed; }

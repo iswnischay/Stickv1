@@ -17,9 +17,21 @@ class_name = "Quota"
 tag = "v1"
 new_sqlite_classes = ["Room"]
 
+[[durable_objects.bindings]]
+name = "WALLET"
+class_name = "Wallet"
+
+[[durable_objects.bindings]]
+name = "MATCH"
+class_name = "Match"
+
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["Quota"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["Wallet", "Match"]
 
 [vars]
 FIREBASE_PROJECT_ID = "stickv1-36a11"

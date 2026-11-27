@@ -2301,7 +2301,7 @@ async function netStart(role, code) {
 function netStop() {
   if (NET.room) NET.room.leave();
   NET.lastSnapObj = null; NET.oppPlanKey = '';
-  NET.reconnecting = false; NET.lastAgain = undefined; NET.slowNote = false;
+  NET.reconnecting = false; NET.lastAgain = undefined; NET.slowNote = false; NET.mid = null;
   Object.assign(NET, { on: false, room: null, opp: null, role: null, snap: null, hostPlan: null, oppPlan: null, ready: 0, oppReady: 0, events: [], seenEv: 0, evId: 0, planKey: '', presKey: '', lastInKey: '' });
 }
 function compactPlan(side) {
@@ -2365,6 +2365,7 @@ function netTick(dt) {
     }
   } else {
     if (d.plan) NET.hostPlan = d.plan;
+    if (d.mid && d.mid !== NET.mid) { NET.mid = d.mid; settleDoolers.n = (settleDoolers.n || 0) + 1; }
     if (d.snap && d.snap !== NET.lastSnapObj) { NET.lastSnapObj = d.snap; guestApply(d.snap); }
     if (fighting() || state === 'timeup') guestSendInput();
   }
@@ -2387,6 +2388,7 @@ function setReady(on) {
   refreshOppPanel();
 }
 function startOnlineRound() {
+  if (round === 0) { NET.mid = (NET.code || 'm') + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); netPresence({ mid: NET.mid }); settleDoolers.n = (settleDoolers.n || 0) + 1; }
   const g = planFromCompact(NET.oppPlan) || { element: plan[1].element, moves: plan[1].result.moves };
   plan[1] = Object.assign(plan[1] || newPlan(g.element), { element: g.element });
   plan[1].result = { valid: true, errors: [], warnings: [], moves: g.moves, total: 0, ultCost: 0 };
@@ -3564,7 +3566,7 @@ function applyEdit(side, i, field, value) {
 function showResults() {
   const [a, b] = fighters;
   const winner = a.score === b.score ? null : (a.score > b.score ? a : b);
-  const verdict = winner ? `${sideLabel(winner.slot)} win${winner.slot === 0 && opts.mode === 'bot' ? '' : 's'} with ${elName(winner.element)}!` : 'It’s a draw!';
+  const wl = winner ? sideLabel(winner.slot) : '', verdict = winner ? `${wl} ${wl === 'You' ? 'win' : 'wins'} with ${elName(winner.element)}!` : 'It’s a draw!';
   const row = (label, fn) => `<tr><th>${label}</th><td>${fn(a)}</td><td>${fn(b)}</td></tr>`;
   showScreen(`<div class="narrow">
     <p class="verdict">${esc(verdict)}</p>
@@ -3585,7 +3587,37 @@ function showResults() {
       ${opts.mode === 'online' && NET.role !== 'host' ? (NET.pres.again ? '<span class="note">Waiting for the host to start the rematch…</span>' : '<button class="cta" data-action="ask-rematch">Play again</button>') : `<button class="cta" data-action="rematch">${opts.mode === 'online' ? 'Play again' : 'Rematch with these moves'}</button>`}
       <button data-action="menu">${opts.mode === 'online' ? 'Leave game' : 'Back to menu'}</button>
     </div>
+    <p class="dl-result" data-dlres></p>
   </div>`);
+  settleDoolers(winner);
+}
+// Pay out once per finished match: bot wins by level, online wins via the server's match record.
+function settleDoolers(winner) {
+  const box = () => screenEl.querySelector('[data-dlres]');
+  const say = (html, cls) => { const b = box(); if (b) { b.innerHTML = html; b.className = 'dl-result ' + (cls || ''); } };
+  if (!RELAY_HTTP || !ACC.user) return;
+  const key = opts.mode + ':' + (NET.mid || '') + ':' + fighters.map(f => f.score).join('-') + ':' + (settleDoolers.n = (settleDoolers.n || 0));
+  if (settleDoolers.done === key) return; settleDoolers.done = key;
+  if (opts.mode === 'bot') {
+    if (!winner || winner.slot !== 0) { say(`Win against the bot to earn doolers: Easy ${DL(30)} · Normal ${DL(60)} · Hard ${DL(100)}.`); return; }
+    say('Adding your doolers…');
+    walletCall('/wallet/bot', { level: opts.level }).then(r => {
+      if (!r) say('Couldn’t reach the doolers server.', 'err');
+      else if (r.ok) say(`+${DL(r.gained)} for beating the ${opts.level} bot. Balance ${DL(r.balance)}${r.capped ? ' (daily bot limit reached)' : ''}`, 'win');
+      else say(r.error === 'too_soon' ? 'That was quick! Bot rewards need at least a minute between wins.' : `No doolers this time. Balance ${DL(r.balance)}`);
+    });
+  } else if (opts.mode === 'online' && NET.mid) {
+    const role = NET.role, winRole = !winner ? 'draw' : winner.slot === 0 ? 'host' : 'guest';
+    if (winRole === 'draw') { say('A draw: no doolers change hands.'); return; }
+    say('Settling doolers with your opponent…');
+    const report = (tries) => walletCall('/wallet/report', { match: NET.mid, role, winner: winRole }).then(r => {
+      if (!r) { say('Couldn’t reach the doolers server.', 'err'); return; }
+      if (r.settled) { const m = r.mine || 0; say(m > 0 ? `+${DL(m)} for the win (25 from your opponent, 25 from the game). Balance ${DL(WALLET.balance)}` : m < 0 ? `${DL(m)} — your opponent took 25 doolers. Balance ${DL(WALLET.balance)}` : 'No doolers changed hands.', m > 0 ? 'win' : m < 0 ? 'lose' : ''); walletRefresh().then(() => { const b = box(); if (b && m) b.innerHTML = b.innerHTML.replace(/Balance <span class="dl">[^<]*<\/span>/, 'Balance ' + DL(WALLET.balance)); }); }
+      else if (r.pending && tries > 0) { setTimeout(() => report(tries - 1), 2500); }
+      else if (r.pending) say('Waiting for your opponent’s game to confirm the result. If they left, the winner still gets 25 from the game shortly.');
+    });
+    report(6);
+  }
 }
 
 screenEl.addEventListener('toggle', e => {
@@ -3633,6 +3665,7 @@ screenEl.addEventListener('click', e => {
   if (btn.dataset.bel) { BUILD.el = btn.dataset.bel; BUILD.msg = null; BUILD.pv = null; BUILD.draft = null; showBuild(); return; }
   if (btn.dataset.prepel && round === 0) { const [sd, id] = btn.dataset.prepel.split(':'); PREP_PV = null; if (Number(sd) === 0 || opts.mode === 'online') sideEls[0] = id; changeElement(Number(sd), id); return; }
   if (btn.dataset.equip !== undefined) { equipMove(Number(btn.dataset.equip)); return; }
+  if (btn.dataset.draftid) { const d = (LIB.drafts[BUILD.el] || []).find(x => x.id === btn.dataset.draftid); if (d) { BUILD.draft = { ult: !!d.ult, raw: deep(d.raw), ai: true, draftId: d.id }; BUILD.pv = { draft: true, ult: !!d.ult, raw: BUILD.draft.raw }; BUILD.ai = { ult: !!d.ult, prompt: '', busy: false, status: null }; BUILD.msg = null; showBuild(); } return; }
   if (btn.dataset.pvid) { BUILD.msg = null; const id = btn.dataset.pvid; BUILD.pv = { id, ult: !!libraryFor(BUILD.el).ults.find(x => x.id === id) }; BUILD.draft = null; showBuild(); return; }
   if (btn.dataset.pvslot) { const [sd, sl] = btn.dataset.pvslot.split(':').map(Number); PREP_PV = { side: sd, slot: sl }; showPrep(); screenEl.scrollTop = 0; return; }
   const side = Number(btn.dataset.side);
@@ -3641,8 +3674,8 @@ screenEl.addEventListener('click', e => {
     case 'play': if (needLogin()) { showLogin(); break; } showPlay(); break;
     case 'bot-setup': showBotSetup(); break;
     case 'practice': if (needLogin()) { showLogin(); break; } showPracticeMenu(); break;
-    case 'build': if (needLogin()) { showLogin(); break; } BUILD.el = sideEls[0]; BUILD.pv = null; BUILD.draft = null; showBuild(); break;
-    case 'start-bot': opts.mode = 'bot'; PREP_PV = null; setupMatch(); updateLegend(); break;
+    case 'build': if (needLogin()) { showLogin(); break; } BUILD.el = sideEls[0]; BUILD.pv = null; BUILD.draft = null; BUILD.msg = null; showBuild(); walletRefresh().then(() => { if (state === 'build') { const y = screenEl.scrollTop; showBuild(); screenEl.scrollTop = y; } }); break;
+    case 'start-bot': settleDoolers.n = (settleDoolers.n || 0) + 1; opts.mode = 'bot'; PREP_PV = null; setupMatch(); updateLegend(); break;
     case 'practice-start': startPractice(); break;
     case 'pv-close': PREP_PV = null; showPrep(); break;
     case 'bnew': BUILD.ai = null; newDraft(false); showBuild(); break;
@@ -3671,6 +3704,34 @@ screenEl.addEventListener('click', e => {
     case 'bwatch': BUILD.pv = { draft: true, ult: BUILD.draft.ult, raw: deep(BUILD.draft.raw) }; showBuild(); break;
     case 'bcancel': BUILD.draft = null; BUILD.pv = null; showBuild(); break;
     case 'bstarter': delete LIB.loadout[BUILD.el]; saveLib(); BUILD.msg = { kind: 'ok', text: 'Back to the starter loadout.' }; showBuild(); break;
+    case 'bdraft': {
+      const d = BUILD.draft, el = BUILD.el; if (!d) break;
+      const list = (LIB.drafts[el] = LIB.drafts[el] || []), raw = toRaw(normalize(deep(d.raw), el, d.ult ? 4 : 0, [], []));
+      if (d.draftId && list.some(x => x.id === d.draftId)) list.find(x => x.id === d.draftId).raw = raw;
+      else { d.draftId = 'c' + Date.now().toString(36); list.push({ id: d.draftId, ult: d.ult, raw }); }
+      saveLib(); BUILD.msg = { kind: 'ok', text: 'Saved as a draft. You can improve it or pay for it any time.', buy: true }; showBuild(); break;
+    }
+    case 'bdiscard': {
+      const d = BUILD.draft, el = BUILD.el;
+      if (d && d.draftId) { LIB.drafts[el] = (LIB.drafts[el] || []).filter(x => x.id !== d.draftId); saveLib(); }
+      BUILD.draft = null; BUILD.pv = null; BUILD.ai = null; BUILD.msg = null; showBuild(); break;
+    }
+    case 'bpay': {
+      const d = BUILD.draft, el = BUILD.el; if (!d || WALLET.busy) break;
+      if (!RELAY_HTTP) { BUILD.msg = { kind: 'err', text: 'Doolers need the online relay, which isn’t set up on this site.', buy: true }; showBuild(); break; }
+      if (WALLET.balance != null && WALLET.balance < MOVE_PRICE) { BUILD.msg = { kind: 'err', text: `You need ${MOVE_PRICE - WALLET.balance} more doolers. Save it as a draft for now.`, buy: true }; showBuild(); break; }
+      WALLET.busy = true; const id = d.draftId || 'c' + Date.now().toString(36);
+      walletCall('/wallet/spend', { reason: 'ai move', ref: id }).then(r => {
+        WALLET.busy = false;
+        if (!r || !r.ok) { BUILD.msg = { kind: 'err', text: !r ? 'Couldn’t reach the doolers server. Try again.' : `Not enough doolers (you have ${r.balance}). Save it as a draft for now.`, buy: true }; showBuild(); return; }
+        const m = normalize(deep(d.raw), el, d.ult ? 4 : 0, [], []);
+        (LIB.custom[el] = LIB.custom[el] || []).push({ id, ult: d.ult, raw: toRaw(m), paid: true });
+        LIB.drafts[el] = (LIB.drafts[el] || []).filter(x => x.id !== id); saveLib();
+        BUILD.ai = null; BUILD.draft = null; BUILD.pv = { id, ult: d.ult };
+        BUILD.msg = { kind: 'ok', text: `${m.name} is yours! ${r.balance} doolers left. Equip it below.` }; showBuild();
+      });
+      break;
+    }
     case 'bedit': {
       const pv = BUILD.pv; if (!pv || pv.draft) break; const x = libMove(BUILD.el, pv.id); if (!x) break;
       BUILD.ai = null; BUILD.draft = { ult: !!pv.ult, raw: deep(x.raw), editOf: pv.id }; BUILD.pv = { draft: true, ult: !!pv.ult, raw: BUILD.draft.raw }; showBuild(); break;
@@ -3739,7 +3800,7 @@ screenEl.addEventListener('click', e => {
     case 'rematch': {
       if (opts.mode === 'online') { const od = (oppPeer() || {}).data || {}; NET.lastAgain = od.again; round = 0; fighters.forEach(f => { f.score = 0; f.roundScore = [0, 0]; f.heads = 0; f.bodies = 0; f.bonus = 0; }); NET.ready = 0; netPresence({ ready: 0 }); showPrep(); break; }
       round = 0;
-      if (opts.mode === 'bot') { sideEls[1] = randomOther(plan[0].element); plan[1] = botPlan(sideEls[1], plan[0]); }
+      if (opts.mode === 'bot') { settleDoolers.n = (settleDoolers.n || 0) + 1; sideEls[1] = randomOther(plan[0].element); plan[1] = botPlan(sideEls[1], plan[0]); }
       fighters = plan.map((p, i) => makeFighter(i, p.element));
       fighters.forEach((f, i) => resetFighter(f, plan[i].result.moves));
       showPrep(); break;
@@ -3761,7 +3822,22 @@ function saveDescsNoop() {}
    In matches players can only swap between moves they own; they can't edit stats there. */
 const ACC = { user: null, username: null, ready: false, busy: false, error: '' };
 const LIB_KEY = 'stick-lib-v1';
-let LIB = (() => { try { const v = JSON.parse(localStorage.getItem(LIB_KEY) || 'null'); if (v && typeof v === 'object') return { custom: v.custom || {}, loadout: v.loadout || {} }; } catch (e) {} return { custom: {}, loadout: {} }; })();
+let LIB = (() => { try { const v = JSON.parse(localStorage.getItem(LIB_KEY) || 'null'); if (v && typeof v === 'object') return { custom: v.custom || {}, loadout: v.loadout || {}, drafts: v.drafts || {} }; } catch (e) {} return { custom: {}, loadout: {}, drafts: {} }; })();
+// merge moves saved in the account with the ones on this device
+function mergeCloudLib(cloud) {
+  if (!cloud || typeof cloud !== 'object') { saveLib(); return; }
+  for (const key of ['custom', 'drafts']) {
+    const theirsAll = cloud[key] || {}; LIB[key] = LIB[key] || {};
+    for (const el of EL_IDS) {
+      const byId = new Map(); [...(Array.isArray(theirsAll[el]) ? theirsAll[el] : []), ...(LIB[key][el] || [])].forEach(c => { if (c && c.id && c.raw) byId.set(c.id, c); });
+      if (byId.size) LIB[key][el] = [...byId.values()];
+    }
+  }
+  // a move paid for on another device is no longer a draft here
+  for (const el of EL_IDS) if (LIB.drafts[el]) { const owned = new Set((LIB.custom[el] || []).map(c => c.id)); LIB.drafts[el] = LIB.drafts[el].filter(d => !owned.has(d.id)); }
+  const loadout = cloud.loadout || {}; for (const el of EL_IDS) if (Array.isArray(loadout[el])) LIB.loadout[el] = loadout[el];
+  saveLib();
+}
 function saveLib() { try { localStorage.setItem(LIB_KEY, JSON.stringify(LIB)); } catch (e) {} if (ACC.user && window.StickAccount) window.StickAccount.saveLib(LIB); }
 const EXTRA_CACHE = {};
 function extrasFor(el) {
@@ -3803,7 +3879,7 @@ function loadoutRaw(el, ids) { return (ids || loadoutIds(el)).map(id => deep(lib
 const needLogin = () => !!(window.StickAccount && window.StickAccount.available()) && !ACC.user;
 function updateTopbar() {
   const el = document.getElementById('userchip'); if (!el) return;
-  el.innerHTML = ACC.user ? `<span class="uc-dot"></span>${esc(ACC.username ? '@' + ACC.username : 'Signing in…')}` : '';
+  el.innerHTML = ACC.user ? `<span class="uc-dot"></span>${esc(ACC.username ? '@' + ACC.username : 'Signing in…')}${RELAY_HTTP ? ` · ${DL(WALLET.balance)}` : ''}` : '';
   el.hidden = !ACC.user;
 }
 function showLogin() {
@@ -3824,7 +3900,7 @@ function showMenu() {
   if (ACC.user && !ACC.username) { showUsername(); return; }
   showScreen(`<div class="home">
     <div class="logo-mark">STICK<span class="vs">v</span><span class="one">1</span></div>
-    <p class="hero-sub">${ACC.username ? `Welcome back, <b>@${esc(ACC.username)}</b>.` : 'Pick an element, fight with the moves you build.'} Head hits score 2, body hits 1.</p>
+    <p class="hero-sub">${ACC.username ? `Welcome back, <b>@${esc(ACC.username)}</b>.${RELAY_HTTP ? ` You have ${DL(WALLET.balance)} doolers.` : ''}` : 'Pick an element, fight with the moves you build.'} Head hits score 2, body hits 1.</p>
     <div class="home-cards">
       <button class="home-card primary" data-action="play"><span class="hc-title">Play</span><span class="hc-sub">Bot or a friend online</span></button>
       <button class="home-card" data-action="practice"><span class="hc-title">Practice</span><span class="hc-sub">Try your moves on a dummy</span></button>
@@ -3944,7 +4020,7 @@ function showBuild() {
       <span class="mc-sub">${ult ? 'ultimate · ' : ''}${esc(x.raw.type)} · ${x.tag}</span></button>`;
   const pv = BUILD.pv, pm = pv && (pv.draft ? normalize(deep(pv.raw), el, pv.ult ? 4 : 0, [], []) : (() => { const x = libMove(el, pv.id); return x ? normalize(deep(x.raw), el, pv.ult ? 4 : 0, [], []) : null; })());
   showScreen(`<div class="wrap">
-    ${screenHead('Build', 'menu', 'Pick an element, click a move to watch it, edit it, or make a new one.')}
+    ${screenHead('Build', 'menu', `Pick an element, click a move to watch it, edit it, or make a new one with AI (${MOVE_PRICE} doolers to keep).${RELAY_HTTP && ACC.user ? ` You have ${DL(WALLET.balance)}.` : ''}`)}
     ${elPicker('bel', el)}
     <div class="build-grid" style="--el: var(--el-${el})">
       <section class="col">
@@ -3966,6 +4042,8 @@ function showBuild() {
         <div class="mgrid">${L.regs.map(x => card(x, false)).join('')}</div>
         <h3 style="margin-top:14px">Ultimates</h3>
         <div class="mgrid">${L.ults.map(x => card(x, true)).join('')}</div>
+        ${(LIB.drafts[el] || []).length ? `<h3 style="margin-top:14px">Drafts</h3><p class="note">AI moves you kept for later. Open one to improve it or pay ${MOVE_PRICE} doolers to make it yours.</p>
+          <div class="mgrid">${LIB.drafts[el].map(d => `<button class="mcard draft-card ${BUILD.draft && BUILD.draft.draftId === d.id ? 'on' : ''}" data-draftid="${d.id}"><span class="mc-top"><b>${esc(d.raw.name)}</b><span class="eq">draft</span></span><span class="mc-sub">${d.ult ? 'ultimate · ' : ''}${esc(d.raw.type)}</span></button>`).join('')}</div>` : ''}
         <h3 style="margin-top:16px">Your loadout</h3>
         <ol class="loadout">${ids.map((id, k) => { const x = libMove(el, id); return `<li><span class="slotkey">${k === 4 ? 'U' : k + 1}</span>${esc(x ? x.raw.name : '?')}<span class="mc-sub"> · ${esc(x ? x.raw.type : '')}</span></li>`; }).join('')}</ol>
         ${BUILD.msg ? `<p class="status ${BUILD.msg.kind}">${esc(BUILD.msg.text)}</p>` : ''}
@@ -3975,6 +4053,22 @@ function showBuild() {
   </div>`);
   if (pm) startPreview(pm, el);
 }
+const MOVE_PRICE = 100;
+/* ---------- doolers ----------
+   The balance lives on the relay server; the game only asks for it and asks to change it. */
+const RELAY_HTTP = BUILT_IN_RELAY ? BUILT_IN_RELAY.replace(/^ws/, 'http').replace(/\/+$/, '') : '';
+const WALLET = { balance: null, busy: false, last: null };
+const DL = n => `<span class="dl">${n == null ? '—' : Math.round(n)}</span>`;
+async function walletCall(path, body) {
+  if (!RELAY_HTTP || !window.StickAccount || !ACC.user) return null;
+  try {
+    const tok = await window.StickAccount.idToken();
+    const r = await fetch(RELAY_HTTP + path, { method: body ? 'POST' : 'GET', headers: { authorization: 'Bearer ' + tok, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    const j = await r.json().catch(() => null); if (j && typeof j.balance === 'number') { WALLET.balance = j.balance; updateTopbar(); }
+    return j;
+  } catch (e) { return null; }
+}
+const walletRefresh = () => walletCall('/wallet');
 const AI_URL = BUILT_IN_RELAY ? BUILT_IN_RELAY.replace(/^ws/, 'http').replace(/\/+$/, '') + '/ai/move' : '';
 const AI_EXAMPLES = { light: 'five swords of light thrown in a fan', darkness: 'blind the enemy so their screen goes dark for 5 seconds', fire: 'a ring of fire that explodes around me', water: 'a whirlpool that pulls the enemy in', earth: 'a wall of rock that blocks everything', wind: 'a tornado that pushes the enemy away', antimatter: 'a black hole that drags enemies to the middle', steel: 'three spinning blades that orbit me', lightning: 'chain lightning from the sky, 4 bolts', ice: 'an ice spear that slows the enemy' };
 function aiHTML() {
@@ -3982,10 +4076,10 @@ function aiHTML() {
   if (!ACC.user) return `<div class="ai-box"><h3>Describe a move</h3><p class="note">Sign in with Google to use the AI move builder. Your moves are then saved to your account.</p><div class="edit-row"><button class="google-btn" data-action="signin"><span class="g">G</span> Sign in with Google</button><button class="ghost" data-action="ai-close">Cancel</button></div></div>`;
   if (!AI_URL) return `<div class="ai-box"><p class="status err">The AI move builder isn't set up on this site yet (it needs the Cloudflare relay and the GEMINI_API_KEY secret).</p><button class="ghost" data-action="ai-close">Close</button></div>`;
   const refining = !!(BUILD.draft && BUILD.draft.ai);
-  return `<div class="ai-box"><h3>${refining ? 'Want to change it?' : `Describe your ${elName(el).toLowerCase()} ${a.ult ? 'ultimate' : 'move'}`}</h3>${refining ? '' : '<p class="note">Say what it should do. The AI builds it, you watch it, then keep it or ask for changes.</p>'}
+  return `<div class="ai-box"><h3>${refining ? 'Improve it' : `Describe your ${elName(el).toLowerCase()} ${a.ult ? 'ultimate' : 'move'}`}</h3>${refining ? '' : '<p class="note">Say what it should do. The AI builds it, you watch it, then keep it or ask for changes.</p>'}
     ${refining ? '' : `<div class="seg" style="margin:6px 0">${[[false, 'Move'], [true, 'Ultimate']].map(([v, l]) => `<button data-aiult="${v ? 1 : 0}" aria-pressed="${a.ult === v}">${l}</button>`).join('')}</div>`}
-    <textarea data-aiprompt rows="2" maxlength="300" placeholder="${refining ? 'e.g. make it faster and add homing' : 'e.g. ' + esc(AI_EXAMPLES[el])}">${esc(a.prompt || '')}</textarea>
-    <div class="edit-row">${a.busy ? '<button disabled>Building…</button>' : `<button class="cta" data-action="ai-go">${refining ? 'Update move' : 'Create move'}</button>`}<button class="ghost" data-action="ai-close">Close</button></div>
+    <textarea data-aiprompt rows="2" maxlength="300" placeholder="${refining ? 'Say what to change, e.g. make it faster, add homing, more swords' : 'e.g. ' + esc(AI_EXAMPLES[el])}">${esc(a.prompt || '')}</textarea>
+    <div class="edit-row">${a.busy ? '<button disabled>Building…</button>' : `<button class="cta" data-action="ai-go">${refining ? 'Improve move' : 'Create move'}</button>`}<button class="ghost" data-action="ai-close">Close</button></div>
     ${a.status ? `<p class="status ${a.status.kind}">${esc(a.status.text)}</p>` : ''}
   </div>`;
 }
@@ -4021,7 +4115,8 @@ async function aiGo() {
     if (!r.ok || !j.move) throw new Error(j.message || 'The AI could not build that move.');
     const before = normalize(deep(j.move), BUILD.el, ult ? 4 : 0, [], []), raw = fitOne(j.move, ult), after = normalize(deep(raw), BUILD.el, ult ? 4 : 0, [], []);
     raw.flavor = String(j.move.flavor || '').slice(0, 160);
-    BUILD.draft = { ult, raw, ai: true }; BUILD.pv = { draft: true, ult, raw };
+    const keepId = BUILD.draft && BUILD.draft.draftId; BUILD.draft = { ult, raw, ai: true, draftId: keepId }; BUILD.pv = { draft: true, ult, raw };
+    if (keepId) { const dd = (LIB.drafts[BUILD.el] || []).find(x => x.id === keepId); if (dd) { dd.raw = deep(raw); saveLib(); } }
     const trimmed = after.build_cost < before.build_cost;
     a.prompt = ''; a.busy = false;
     a.status = { kind: 'ok', text: `Here it is. Watch it above, tweak the sliders, or describe a change.${trimmed ? ' It was toned down a little to fit the limits.' : ''}${j.move.note ? ' AI note: ' + String(j.move.note).slice(0, 140) : ''}${typeof j.left === 'number' ? ` (${j.left} AI moves left today)` : ''}` };
@@ -4067,7 +4162,10 @@ function draftHTML() {
     </div>
     <p class="type-hint">${TYPE_HINTS[m.type]}</p>
     <p class="${over ? 'status err' : 'note'}">${d.ult ? `Build ${m.build_cost} of ${ULT_BUDGET}` : `Build ${m.build_cost} · ${m.mana_cost} mana per cast`}${over ? (d.ult ? ' — too strong for an ultimate' : ' — too strong for one move (max 40 build, 60 mana)') : ''}</p>
-    <div class="edit-row"><button class="cta" data-action="bsave" ${over ? 'disabled' : ''}>${d.ai ? 'Add to my moves' : d.editOf ? 'Save changes' : 'Save move'}</button><button data-action="bwatch">Watch it</button><button class="ghost" data-action="bcancel">${d.ai ? 'Discard' : 'Cancel'}</button></div>
+    ${d.ai ? `<div class="edit-row buy-row"><button class="cta" data-action="bpay" ${over ? 'disabled' : ''}>Keep it · ${DL(MOVE_PRICE)}</button><button data-action="bdraft">${d.draftId ? 'Update draft' : 'Save as draft'}</button><button data-action="bwatch">Watch it</button><button class="ghost" data-action="bdiscard">Discard</button></div>
+      <p class="note">${WALLET.balance == null ? 'Checking your doolers…' : WALLET.balance >= MOVE_PRICE ? `You have ${DL(WALLET.balance)}. Keeping it costs ${DL(MOVE_PRICE)}.` : `You have ${DL(WALLET.balance)} — ${DL(MOVE_PRICE - WALLET.balance)} short. Save it as a draft, win some matches, then come back.`}</p>
+      ${BUILD.msg && BUILD.msg.buy ? `<p class="status ${BUILD.msg.kind}">${esc(BUILD.msg.text)}</p>` : ''}`
+    : `<div class="edit-row"><button class="cta" data-action="bsave" ${over ? 'disabled' : ''}>${d.ai ? 'Add to my moves' : d.editOf ? 'Save changes' : 'Save move'}</button><button data-action="bwatch">Watch it</button><button class="ghost" data-action="bcancel">${d.ai ? 'Discard' : 'Cancel'}</button></div>`}
   </div>`;
 }
 function draftEdit(field, value) {
@@ -4139,7 +4237,8 @@ showMenu();
 if (window.StickAccount) window.StickAccount.onChange(st => {
   const wasUser = ACC.user && ACC.user.uid;
   ACC.user = st.user; ACC.username = st.username; ACC.ready = st.ready; if (st.user) ACC.busy = false; if (st.error) ACC.error = st.error;
-  if (st.user && st.user.uid !== wasUser) mergeCloudLib(st.lib);
+  if (st.user && st.user.uid !== wasUser) { try { mergeCloudLib(st.lib); } catch (e) { console.warn(e); } walletRefresh(); }
+  if (!st.user) WALLET.balance = null;
   updateTopbar();
   if (st.user && st.ready && !st.username && ['menu', 'login', 'play', 'build', 'practice-menu'].includes(state)) { showUsername(st.error); return; }
   if (state === 'menu' || state === 'login' || state === 'username' && st.username || (!st.user && needLogin() && !fighting())) showMenu();

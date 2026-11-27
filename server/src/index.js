@@ -18,7 +18,11 @@ const cleanId = i => String(i || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40)
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
+    const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' };
+    if (url.pathname.startsWith('/wallet')) {
+      if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+      return walletRoute(request, env, cors, url.pathname);
+    }
     if (url.pathname === '/ai/move') {
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
       if (request.method !== 'POST') return json({ error: 'method' }, 405, cors);
@@ -193,5 +197,119 @@ export class Quota {
     if (rec.n >= limit) return json({ ok: false, left: 0 });
     rec.n++; await this.state.storage.put('q', rec);
     return json({ ok: true, left: limit - rec.n });
+  }
+}
+
+
+/* ---------- doolers: the in-game currency ----------
+   Balances live here on the server (one Durable Object per player), never in the browser, so nobody can edit their own.
+     GET  /wallet                          -> { balance }
+     POST /wallet/bot    { level }         -> win against the bot: easy 30, normal 60, hard 100
+     POST /wallet/spend  { reason, ref }   -> pay 100 to keep an AI-built move
+     POST /wallet/report { match, role, winner }  -> online result; when both players agree the winner gets 50:
+                                              25 from the loser's balance and 25 from the game
+   New players start with 100. Earnings have daily caps and bot wins are rate-limited to stop farming. */
+const DOOLERS = { welcome: 100, move: 100, bot: { easy: 30, normal: 60, hard: 100 }, matchPot: 25, botCapPerDay: 800, matchCapPerDay: 1500, botMinGapMs: 50000 };
+async function authUid(request, env) {
+  const tok = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  if (env.DEV_FAKE_AUTH === '1' && tok.startsWith('dev:')) return tok.slice(4);
+  return verifyFirebaseToken(tok, env.FIREBASE_PROJECT_ID);
+}
+const wallet = (env, uid) => env.WALLET.get(env.WALLET.idFromName(uid));
+const callDO = async (stub, path, body) => (await stub.fetch('https://do' + path, { method: 'POST', body: JSON.stringify(body || {}) })).json();
+async function walletRoute(request, env, cors, path) {
+  let uid; try { uid = await authUid(request, env); } catch (e) { return json({ error: 'auth', message: 'Sign in to use doolers.' }, 401, cors); }
+  let body = {}; if (request.method === 'POST') { try { body = await request.json(); } catch (e) {} }
+  const w = wallet(env, uid);
+  if (path === '/wallet') return json(await callDO(w, '/get', {}), 200, cors);
+  if (path === '/wallet/bot') return json(await callDO(w, '/bot', { level: String(body.level || '') }), 200, cors);
+  if (path === '/wallet/spend') return json(await callDO(w, '/spend', { amount: DOOLERS.move, reason: String(body.reason || 'move').slice(0, 40), ref: String(body.ref || '').slice(0, 40) }), 200, cors);
+  if (path === '/wallet/report') {
+    const match = String(body.match || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 60), role = body.role === 'host' ? 'host' : body.role === 'guest' ? 'guest' : '';
+    const winner = ['host', 'guest', 'draw'].includes(body.winner) ? body.winner : '';
+    if (!match || !role || !winner) return json({ error: 'bad_request' }, 400, cors);
+    const m = env.MATCH.get(env.MATCH.idFromName(match));
+    return json(await callDO(m, '/report', { uid, role, winner }), 200, cors);
+  }
+  return json({ error: 'not_found' }, 404, cors);
+}
+
+export class Wallet {
+  constructor(state) { this.state = state; }
+  async load() {
+    let w = await this.state.storage.get('w');
+    if (!w) { w = { balance: DOOLERS.welcome, day: '', bot: 0, match: 0, lastBot: 0, log: [{ t: Date.now(), d: DOOLERS.welcome, r: 'welcome' }] }; await this.state.storage.put('w', w); }
+    const day = new Date().toISOString().slice(0, 10); if (w.day !== day) { w.day = day; w.bot = 0; w.match = 0; }
+    return w;
+  }
+  async save(w) { w.log = (w.log || []).slice(-30); await this.state.storage.put('w', w); }
+  async fetch(request) {
+    const path = new URL(request.url).pathname; let b = {}; try { b = await request.json(); } catch (e) {}
+    const w = await this.load();
+    if (path === '/get') return json({ balance: w.balance });
+    if (path === '/bot') {
+      const amt = DOOLERS.bot[b.level]; if (!amt) return json({ ok: false, balance: w.balance, error: 'level' });
+      if (Date.now() - w.lastBot < DOOLERS.botMinGapMs) return json({ ok: false, balance: w.balance, error: 'too_soon' });
+      const give = Math.max(0, Math.min(amt, DOOLERS.botCapPerDay - w.bot));
+      w.lastBot = Date.now(); w.bot += give; w.balance += give; w.log.push({ t: Date.now(), d: give, r: 'bot ' + b.level }); await this.save(w);
+      return json({ ok: give > 0, gained: give, balance: w.balance, capped: give < amt });
+    }
+    if (path === '/spend') {
+      const amt = Number(b.amount) || 0; if (w.balance < amt) return json({ ok: false, balance: w.balance, error: 'not_enough' });
+      w.balance -= amt; w.log.push({ t: Date.now(), d: -amt, r: b.reason + ' ' + b.ref }); await this.save(w);
+      return json({ ok: true, balance: w.balance });
+    }
+    if (path === '/credit') { // from a settled online match
+      const give = Math.max(0, Math.min(Number(b.amount) || 0, DOOLERS.matchCapPerDay - w.match));
+      w.match += give; w.balance += give; w.log.push({ t: Date.now(), d: give, r: b.reason }); await this.save(w); return json({ ok: true, gained: give, balance: w.balance });
+    }
+    if (path === '/debit') { // the loser pays what they can, never going below zero
+      const take = Math.max(0, Math.min(Number(b.amount) || 0, w.balance));
+      w.balance -= take; w.log.push({ t: Date.now(), d: -take, r: b.reason }); await this.save(w); return json({ ok: true, taken: take, balance: w.balance });
+    }
+    return json({ error: 'not_found' }, 404);
+  }
+}
+
+// One object per online match. Both players report who won; when they agree, money moves once.
+// If only the winner reports (the loser closed the game), after 90 s the winner still gets the game's 25.
+export class Match {
+  constructor(state, env) { this.state = state; this.env = env; }
+  async fetch(request) {
+    const b = await request.json().catch(() => ({}));
+    const m = (await this.state.storage.get('m')) || { reports: {}, settled: null };
+    const pub = st => st && { winner: st.winner, won: st.won, lost: st.lost };
+    if (m.settled) return json({ ok: true, settled: pub(m.settled), mine: this.mine(m.settled, b.uid) });
+    const other = m.reports[b.role === 'host' ? 'guest' : 'host'];
+    if (other && other.uid === b.uid) return json({ ok: false, error: 'same_player' });
+    m.reports[b.role] = { uid: b.uid, winner: b.winner, t: Date.now() };
+    await this.state.storage.put('m', m);
+    const h = m.reports.host, g = m.reports.guest;
+    if (h && g) { await this.settle(m, h.winner === g.winner ? h.winner : 'disputed'); return json({ ok: true, settled: pub(m.settled), mine: this.mine(m.settled, b.uid) }); }
+    await this.state.storage.setAlarm(Date.now() + 90000);
+    return json({ ok: true, pending: true });
+  }
+  mine(st, uid) { if (!st) return 0; return st.winnerUid === uid ? st.won : st.loserUid === uid ? -st.lost : 0; }
+  async settle(m, winnerRole) {
+    const st = { winner: winnerRole, won: 0, lost: 0, winnerUid: null, loserUid: null };
+    if (winnerRole === 'host' || winnerRole === 'guest') {
+      const win = m.reports[winnerRole], lose = m.reports[winnerRole === 'host' ? 'guest' : 'host'];
+      st.winnerUid = win && win.uid; st.loserUid = lose && lose.uid;
+      let fromLoser = 0;
+      if (lose && lose.winner === winnerRole) { const r = await callDO(wallet(this.env, lose.uid), '/debit', { amount: DOOLERS.matchPot, reason: 'lost online' }); fromLoser = r.taken || 0; }
+      const r2 = await callDO(wallet(this.env, win.uid), '/credit', { amount: DOOLERS.matchPot + fromLoser, reason: 'won online' });
+      st.won = r2.gained || 0; st.lost = fromLoser;
+    }
+    m.settled = st; await this.state.storage.put('m', m);
+  }
+  async alarm() {
+    const m = (await this.state.storage.get('m')) || { reports: {} }; if (m.settled) return;
+    const rs = Object.values(m.reports); const one = rs.length === 1 ? rs[0] : null;
+    // only the winner showed up: give the game's share, take nothing from the absent player
+    if (one && (one.winner === 'host' || one.winner === 'guest') && m.reports[one.winner] && m.reports[one.winner].uid === one.uid) {
+      const r = await callDO(wallet(this.env, one.uid), '/credit', { amount: DOOLERS.matchPot, reason: 'won online (opponent left)' });
+      m.settled = { winner: one.winner, won: r.gained || 0, lost: 0, winnerUid: one.uid, loserUid: null };
+    } else m.settled = { winner: 'none', won: 0, lost: 0 };
+    await this.state.storage.put('m', m);
   }
 }
