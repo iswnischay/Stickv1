@@ -27,6 +27,8 @@ Doolers are the in-game currency (shown with a gold **d**). New players start wi
 - **Beat a friend online:** +50, of which 25 comes from the loser's balance and 25 from the game. Both games report the result and doolers only move when they agree. If the loser closes the game, the winner still gets the game's 25 after 90 seconds.
 - **Spend:** keeping a move built by the AI costs 100. Without enough doolers you can save it as a draft, keep improving it with the AI, and pay for it later. Slider edits stay free.
 
+**Tester code:** add a repository secret `TESTER_CODE` (any word you like). Signed-in players who enter it under Settings → Tester code get 500 doolers each time. The code stays on the server and never appears in the page.
+
 Balances live on the Cloudflare relay (one record per player), not in the browser, so they can't be edited from the page.
 
 ## Folder layout

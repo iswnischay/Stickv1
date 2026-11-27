@@ -209,7 +209,7 @@ export class Quota {
      POST /wallet/report { match, role, winner }  -> online result; when both players agree the winner gets 50:
                                               25 from the loser's balance and 25 from the game
    New players start with 100. Earnings have daily caps and bot wins are rate-limited to stop farming. */
-const DOOLERS = { welcome: 100, move: 100, bot: { easy: 30, normal: 60, hard: 100 }, matchPot: 25, botCapPerDay: 800, matchCapPerDay: 1500, botMinGapMs: 50000 };
+const DOOLERS = { coupon: 500, welcome: 100, move: 100, bot: { easy: 30, normal: 60, hard: 100 }, matchPot: 25, botCapPerDay: 800, matchCapPerDay: 1500, botMinGapMs: 50000 };
 async function authUid(request, env) {
   const tok = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
   if (env.DEV_FAKE_AUTH === '1' && tok.startsWith('dev:')) return tok.slice(4);
@@ -224,6 +224,14 @@ async function walletRoute(request, env, cors, path) {
   if (path === '/wallet') return json(await callDO(w, '/get', {}), 200, cors);
   if (path === '/wallet/bot') return json(await callDO(w, '/bot', { level: String(body.level || '') }), 200, cors);
   if (path === '/wallet/spend') return json(await callDO(w, '/spend', { amount: DOOLERS.move, reason: String(body.reason || 'move').slice(0, 40), ref: String(body.ref || '').slice(0, 40) }), 200, cors);
+  if (path === '/wallet/coupon') {
+    // tester code: kept as a secret on the server (TESTER_CODE), never in the page
+    const want = String(env.TESTER_CODE || ''), got = String(body.code || '').trim();
+    if (!want) return json({ ok: false, error: 'off', message: 'Tester codes are not set up on this server.' }, 200, cors);
+    let diff = want.length ^ got.length; for (let i = 0; i < Math.max(want.length, got.length); i++) diff |= (want.charCodeAt(i) || 0) ^ (got.charCodeAt(i) || 0);
+    if (diff) return json({ ok: false, error: 'bad_code', message: 'That code isn’t right.' }, 200, cors);
+    return json(await callDO(w, '/coupon', { amount: DOOLERS.coupon }), 200, cors);
+  }
   if (path === '/wallet/report') {
     const match = String(body.match || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 60), role = body.role === 'host' ? 'host' : body.role === 'guest' ? 'guest' : '';
     const winner = ['host', 'guest', 'draw'].includes(body.winner) ? body.winner : '';
@@ -258,6 +266,11 @@ export class Wallet {
       const amt = Number(b.amount) || 0; if (w.balance < amt) return json({ ok: false, balance: w.balance, error: 'not_enough' });
       w.balance -= amt; w.log.push({ t: Date.now(), d: -amt, r: b.reason + ' ' + b.ref }); await this.save(w);
       return json({ ok: true, balance: w.balance });
+    }
+    if (path === '/coupon') { // a few seconds apart so a stuck button can't fire it twice
+      if (Date.now() - (w.lastCoupon || 0) < 3000) return json({ ok: false, balance: w.balance, error: 'too_soon', message: 'Give it a second and try again.' });
+      const amt = Number(b.amount) || 0; w.lastCoupon = Date.now(); w.balance += amt; w.log.push({ t: Date.now(), d: amt, r: 'tester code' }); await this.save(w);
+      return json({ ok: true, gained: amt, balance: w.balance });
     }
     if (path === '/credit') { // from a settled online match
       const give = Math.max(0, Math.min(Number(b.amount) || 0, DOOLERS.matchCapPerDay - w.match));

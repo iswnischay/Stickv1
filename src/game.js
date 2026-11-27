@@ -3297,6 +3297,10 @@ function showSettings() {
   showScreen(`<div class="narrow">
     <h2>Settings</h2>
     <p class="note">Saved on this device only.</p>
+    ${RELAY_HTTP && ACC.user ? `<h3 style="margin-top:18px">Tester code</h3>
+    <p class="note">Have a tester code? Each time you enter it you get ${DL(500)}. You have ${DL(WALLET.balance)}.</p>
+    <div class="code-row"><input data-coupon maxlength="40" placeholder="CODE" autocomplete="off" style="text-transform:none;letter-spacing:0.04em;width:14rem"><button data-action="redeem">Redeem</button></div>
+    ${WALLET.couponMsg ? `<p class="status ${WALLET.couponMsg.kind}">${WALLET.couponMsg.text}</p>` : ''}` : ''}
     <h3 style="margin-top:18px">Effects</h3>
     <div class="opt"><span>Impact frames</span><div class="seg"><button data-impact="on" aria-pressed="${impactOn}">On</button><button data-impact="off" aria-pressed="${!impactOn}">Off</button></div></div>
     <p class="note">The split-second high-contrast flash on big hits. Turn it off if flashing bothers you (it's also off when your system asks for reduced motion).</p>
@@ -3765,7 +3769,17 @@ screenEl.addEventListener('click', e => {
     }
     case 'ready': saveDescsNoop(); setReady(true); break;
     case 'unready': setReady(false); break;
-    case 'settings': showSettings(); break;
+    case 'settings': WALLET.couponMsg = null; showSettings(); walletRefresh().then(() => { if (state === 'settings') showSettings(); }); break;
+    case 'redeem': {
+      const inp = screenEl.querySelector('[data-coupon]'), code = inp ? inp.value.trim() : '';
+      if (!code) { WALLET.couponMsg = { kind: 'err', text: 'Enter the code first.' }; showSettings(); break; }
+      btn.disabled = true; btn.textContent = 'Checking…';
+      walletCall('/wallet/coupon', { code }).then(r => {
+        WALLET.couponMsg = !r ? { kind: 'err', text: 'Couldn’t reach the doolers server.' } : r.ok ? { kind: 'ok', text: `+${DL(r.gained)} added. Balance ${DL(r.balance)}.` } : { kind: 'err', text: esc(r.message || 'That didn’t work.') };
+        if (state === 'settings') showSettings();
+      });
+      break;
+    }
     case 'save-settings': {
       const v = k => (screenEl.querySelector(`[data-setting="${k}"]`) || {}).value || '';
       settings.key = v('key').trim(); settings.gkey = v('gkey').trim(); settings.gmodel = v('gmodel').trim() || 'gemini-3.5-flash-lite'; settings.peerHost = v('peerHost').trim(); settings.turnUrl = v('turnUrl').trim(); settings.turnUser = v('turnUser').trim(); settings.turnPass = v('turnPass').trim();
