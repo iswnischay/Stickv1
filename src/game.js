@@ -2644,9 +2644,9 @@ function placeCanvas() {
 function showScreen(html) {
   const keepPreview = /class="pv-stage"/.test(html);
   if (!keepPreview && PV.on) stopPreview();
-  screenEl.innerHTML = html; screenEl.hidden = false; placeCanvas();
+  screenEl.innerHTML = html; screenEl.hidden = false; document.body.classList.add('has-screen'); placeCanvas();
 }
-function hideScreen() { if (PV.on) stopPreview(); screenEl.hidden = true; screenEl.innerHTML = ''; placeCanvas(); }
+function hideScreen() { if (PV.on) stopPreview(); screenEl.hidden = true; screenEl.innerHTML = ''; document.body.classList.remove('has-screen'); placeCanvas(); }
 function clearArena() { projectiles = []; beams = []; zones = []; rings = []; particles = []; texts = []; strikes = []; waves = []; traps = []; summons = []; flashes = []; pending = []; fx = []; banner = 0; }
 
 function segButtons(key, items) {
@@ -3018,11 +3018,21 @@ screenEl.addEventListener('click', e => {
     case 'ai-open': BUILD.ai = { ult: false, prompt: '', busy: false, status: null }; BUILD.draft = null; showBuild(); { const t = screenEl.querySelector('[data-aiprompt]'); if (t) t.focus(); } break;
     case 'ai-close': BUILD.ai = null; showBuild(); break;
     case 'ai-go': aiGo(); break;
-    case 'signin': window.StickAccount && window.StickAccount.signIn().catch(err => { const m = String((err && err.code) || err.message || err); if (!/popup-closed|cancelled/.test(m)) alert('Sign-in failed: ' + m); }); break;
+    case 'signin': {
+      if (!window.StickAccount) break;
+      ACC.busy = true; ACC.error = ''; if (state === 'login') showLogin();
+      window.StickAccount.signIn().then(() => { ACC.busy = false; }).catch(err => {
+        ACC.busy = false; const code = String((err && err.code) || (err && err.message) || err);
+        ACC.error = /popup-closed|cancelled/.test(code) ? '' : /unauthorized-domain/.test(code) ? 'This website is not yet allowed in Firebase (Authentication → Settings → Authorized domains).' : 'Sign-in failed: ' + code;
+        if (state === 'login') showLogin(); else if (ACC.error) alert(ACC.error);
+      });
+      break;
+    }
     case 'signout': window.StickAccount && window.StickAccount.signOut().then(() => showMenu()); break;
     case 'username': showUsername(); break;
     case 'save-username': {
       const v = (screenEl.querySelector('[data-uname]') || {}).value || '';
+      const b = screenEl.querySelector('[data-action=save-username]'); if (b) { b.disabled = true; b.textContent = 'Saving…'; }
       window.StickAccount.claimUsername(v).then(() => showMenu()).catch(err => showUsername(err.message || 'Could not save that name.'));
       break;
     }
@@ -3117,7 +3127,7 @@ function saveDescsNoop() {}
    Every element has a library of moves: its 5 starters, a few extra presets borrowed from other elements and
    re-skinned, and any custom moves the player made in Build. A loadout is 4 moves + 1 ultimate picked from it.
    In matches players can only swap between moves they own; they can't edit stats there. */
-const ACC = { user: null, username: null, ready: false };
+const ACC = { user: null, username: null, ready: false, busy: false, error: '' };
 const LIB_KEY = 'stick-lib-v1';
 let LIB = (() => { try { const v = JSON.parse(localStorage.getItem(LIB_KEY) || 'null'); if (v && typeof v === 'object') return { custom: v.custom || {}, loadout: v.loadout || {} }; } catch (e) {} return { custom: {}, loadout: {} }; })();
 function saveLib() { try { localStorage.setItem(LIB_KEY, JSON.stringify(LIB)); } catch (e) {} if (ACC.user && window.StickAccount) window.StickAccount.saveLib(LIB); }
@@ -3169,8 +3179,9 @@ function showLogin() {
   showScreen(`<div class="home">
     <div class="logo-mark">STICK<span class="vs">v</span><span class="one">1</span></div>
     <p class="hero-sub">Ten elements. Your moves, built by you. Fight a bot or a friend.</p>
-    ${!ACC.ready ? '<p class="note">Checking sign-in…</p>' : `<button class="google-btn big" data-action="signin"><span class="g">G</span> Sign in with Google to play</button>
+    ${ACC.busy ? '<p class="note pulse">Signing you in…</p>' : !ACC.ready ? '<p class="note pulse">Checking sign-in…</p>' : `<button class="google-btn lg" data-action="signin"><span class="g">G</span> Sign in with Google to play</button>
     <p class="note" style="margin-top:14px">Your username and moves are saved to your account.</p>`}
+    ${ACC.error ? `<p class="status err">${esc(ACC.error)}</p>` : ''}
   </div>`);
 }
 function showMenu() {
@@ -3475,11 +3486,11 @@ updateLegend();
 showMenu();
 if (window.StickAccount) window.StickAccount.onChange(st => {
   const wasUser = ACC.user && ACC.user.uid;
-  ACC.user = st.user; ACC.username = st.username; ACC.ready = st.ready;
+  ACC.user = st.user; ACC.username = st.username; ACC.ready = st.ready; if (st.user) ACC.busy = false; if (st.error) ACC.error = st.error;
   if (st.user && st.user.uid !== wasUser) mergeCloudLib(st.lib);
   updateTopbar();
-  if (st.user && !st.username && ['menu', 'login', 'play', 'build', 'practice-menu'].includes(state)) { showUsername(); return; }
-  if (state === 'menu' || state === 'login' || (!st.user && needLogin() && !fighting())) showMenu();
+  if (st.user && st.ready && !st.username && ['menu', 'login', 'play', 'build', 'practice-menu'].includes(state)) { showUsername(st.error); return; }
+  if (state === 'menu' || state === 'login' || state === 'username' && st.username || (!st.user && needLogin() && !fighting())) showMenu();
   else if (state === 'build') showBuild();
 });
 initSample();
