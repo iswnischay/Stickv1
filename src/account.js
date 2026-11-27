@@ -1,12 +1,13 @@
 // Accounts: Google sign-in through Firebase, a unique username, and the player's moves saved to Firestore.
 // Everything here is optional; the game works as a guest and keeps moves on the device.
-// The Firebase web config below is meant to be public (access is controlled by firestore.rules).
+// The Firebase web key is no longer kept in the code: the build reads it from the FIREBASE_API_KEY
+// repository secret (or VITE_FIREBASE_API_KEY in .env.local when running locally). Without it, sign-in is off.
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, browserLocalPersistence, setPersistence } from 'firebase/auth';
 import { getFirestore, doc, getDoc, setDoc, runTransaction, serverTimestamp } from 'firebase/firestore/lite';
 
 const firebaseConfig = {
-  apiKey: 'AIzaSyC3reVWHyKjVPcSc1R5BHV8HkaKHuTeJnw',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || '',
   authDomain: 'stickv1-36a11.firebaseapp.com',
   projectId: 'stickv1-36a11',
   storageBucket: 'stickv1-36a11.firebasestorage.app',
@@ -15,7 +16,7 @@ const firebaseConfig = {
 };
 
 let auth = null, db = null, available = false;
-try {
+if (firebaseConfig.apiKey) try {
   const app = initializeApp(firebaseConfig);
   auth = getAuth(app); db = getFirestore(app); available = /^https?:$/.test(location.protocol);
 } catch (e) { available = false; }

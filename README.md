@@ -15,6 +15,7 @@ A stick-figure fighting game. Pick one of 10 elements, build four moves and an u
 Sign-in is optional (Google, through Firebase). Signed-in players pick a unique username, their moves are saved to their account, and they can use **Build → Describe it to the AI**: write an idea ("five swords of light thrown in a fan", "blind the enemy so their screen goes dark for 5 seconds"), watch the move the AI builds, ask for changes, then add it to your moves. The AI only combines the game's building blocks, and every move is trimmed to fit the normal limits, so AI moves are never overpowered. Each player gets 40 AI moves a day.
 
 Setup (once):
+0. Add the Firebase web API key as the repository secret `FIREBASE_API_KEY` (Firebase console → Project settings → Your apps → Web app → `apiKey`). For local testing put it in `.env.local` as `VITE_FIREBASE_API_KEY`.
 1. Firebase project `stickv1-36a11`: Authentication → Sign-in method → Google (on). Authentication → Settings → Authorized domains → add `YOUR-USERNAME.github.io`.
 2. Firestore Database → Rules: paste the contents of `firestore.rules` and **Publish**.
 3. Get a free Gemini key at aistudio.google.com and add it as the repository secret `GEMINI_API_KEY`. The workflow hands it to the Cloudflare relay; it never appears in the web page.

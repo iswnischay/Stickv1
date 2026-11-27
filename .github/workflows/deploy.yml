@@ -114,6 +114,8 @@ jobs:
         env:
           VITE_BASE_PATH: /${{ github.event.repository.name }}/
           RELAY_URL: ${{ needs.deploy-relay.outputs.url }}
+          # Firebase web key for Google sign-in, from the FIREBASE_API_KEY repository secret.
+          VITE_FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
           # Optional TURN relay for the direct peer-to-peer fallback (see README).
           TURN_URL: ${{ github.event_name != 'pull_request' && secrets.TURN_URL || '' }}
           TURN_USERNAME: ${{ github.event_name != 'pull_request' && secrets.TURN_USERNAME || '' }}
