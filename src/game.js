@@ -961,6 +961,7 @@ function update(dt) {
   pollPadCapture();
   if (NET.on) netTick(dt);
   if (PV.on) { previewUpdate(dt); return; }
+  if (state === 'ko') { koUpdate(dt); return; }
   if (NET.on && NET.role === 'guest') { guestUpdate(dt); return; }
   stepParticles(dt);
   for (const t of texts) { t.life -= dt; t.y -= 40 * dt; }
@@ -1081,7 +1082,7 @@ function stepParticles(dt) {
       const py = p.y - p.vy * dt; p.vy += 1500 * dt; p.vx *= 0.99;
       let land = p.y >= GROUND ? GROUND : 0;
       if (!land && p.vy > 0) for (const q of PLATFORMS) if (py <= q.y && p.y >= q.y && p.x > q.x && p.x < q.x + q.w) { land = q.y; break; }
-      if (land) { addStain(p.x, land, p.size); p.life = 0; }
+      if (land) { p.life = 0; }
     }
     else { p.vx *= 0.95; p.vy *= 0.95; }
   }
@@ -1504,14 +1505,11 @@ let stains = [];
 const BLOOD = ['#b3122e', '#8f0a22', '#d01c3a'];
 function spillBlood(x, y, dir, amount) {
   if (!bloodOn) return;
-  const n = Math.round(10 + amount * 14);
+  const n = Math.round(3 + amount * 3);
   for (let i = 0; i < n; i++) {
-    // most of it sprays the way the hit pushed, some splashes back and up
-    const back = Math.random() < 0.2, sp = 90 + Math.random() * 330, an = (back ? -dir : dir) > 0 ? -0.5 + (Math.random() - 0.5) * 1.6 : Math.PI + 0.5 + (Math.random() - 0.5) * 1.6;
-    spawnP(x + (Math.random() - 0.5) * 10, y + (Math.random() - 0.5) * 10, 'blood', Math.cos(an) * sp, Math.sin(an) * sp - 120 - Math.random() * 120, 1.8, 2.5 + Math.random() * 4, 'blood');
+    const sp = 80 + Math.random() * 200, an = (dir > 0 ? -0.6 : Math.PI + 0.6) + (Math.random() - 0.5) * 1.2;
+    spawnP(x + (Math.random() - 0.5) * 8, y + (Math.random() - 0.5) * 8, 'blood', Math.cos(an) * sp, Math.sin(an) * sp - 60, 0.9, 1.8 + Math.random() * 2, 'blood');
   }
-  // a quick splash right at the wound
-  for (let i = 0; i < 5; i++) spawnP(x, y, 'blood', (Math.random() - 0.5) * 120, (Math.random() - 0.5) * 120, 0.22, 6 + Math.random() * 5, 'bloodmist');
 }
 function addStain(x, y, size) {
   stains.push({ x, y, r: size * (2.8 + Math.random() * 3), life: 9, max: 9, seed: Math.random() * 100, col: BLOOD[Math.floor(Math.random() * BLOOD.length)] });
@@ -1645,6 +1643,7 @@ function drawFighter(f) {
   // squash and stretch around the feet, keeping the volume the same
   ctx.translate(f.x, f.y); ctx.scale(1 / Math.sqrt(f.sq), f.sq); ctx.translate(-f.x, -f.y);
   if (f.dodgeT > 0) { f.rollT = (f.rollT || 0) + frameDt; const k = Math.min(1, f.rollT / DODGE_TIME), dir = Math.sign(f.vx || f.dodgeDir || 1), cy = f.y - 26; ctx.translate(f.x, cy); ctx.rotate(k * Math.PI * 2 * dir); ctx.translate(-f.x, -cy); } else f.rollT = 0;
+  if (state === 'ko' && f === KO.loser) { ctx.translate(f.x, f.y - 30); ctx.rotate(f.koRot || 0); ctx.scale(f.koScale ?? 1, f.koScale ?? 1); ctx.translate(-f.x, -(f.y - 30)); ctx.globalAlpha *= f.koAlpha ?? 1; }
   if (f.flip > 0) { const k = 1 - f.flip / 0.42, e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2, cy = f.y - 40; ctx.translate(f.x, cy); ctx.rotate(e * Math.PI * 2 * (Math.sign(f.faceS) || 1)); ctx.translate(-f.x, -cy); }
   drawTrails(f);
   if (f.invuln > 0 && !f.dash && !(f.dodgeT > 0) && Math.floor(clock * 30) % 2) ctx.globalAlpha = 0.45;
@@ -1833,7 +1832,8 @@ function drawBanner() {
 const cam = { x: W / 2, y: H / 2, z: 1, punch: 0 };
 function updateCam(dt) {
   let tz = 1, tx = W / 2;
-  if (fighters.length === 2 && (fighting() || state === 'timeup')) {
+  if (state === 'ko' && KO.loser) { const u = KO.t / KO.dur; tz = 1.08 + Math.min(0.22, u * 0.6); tx = KO.loser.x * 0.75 + KO.winner.x * 0.25; }
+  else if (fighters.length === 2 && (fighting() || state === 'timeup')) {
     const d = Math.abs(fighters[0].x - fighters[1].x);
     tz = clamp(1.1 - d / W * 0.22, 1, 1.1); tx = (fighters[0].x + fighters[1].x) / 2;
     if (cam.focus && cam.focus.t > 0) { cam.focus.t -= dt; tz += 0.08; tx = tx * 0.4 + cam.focus.x * 0.6; }
@@ -1963,14 +1963,17 @@ function render() {
   ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, GROUND); ctx.clip();
   drawEntities();
   ctx.restore();
+  if (state === 'ko') drawKOWorld(false);
   fighters.forEach(drawFighter);
+  if (state === 'ko') drawKOWorld(true);
   stepDrawFx();
   drawTexts();
   fighters.forEach(drawAim);
   ctx.restore();
+  if (state === 'ko') drawKOScreen();
   drawImpactFrame();
   drawDarkness();
-  if (!PV.on) { drawHUD(); drawBanner(); }
+  if (!PV.on && state !== 'ko') { drawHUD(); drawBanner(); }
   drawReconnect();
   if (typeof exitBtn !== 'undefined') exitBtn.hidden = !(opts.mode === 'practice' && state === 'fight' && !PV.on);
   const aiming = fighting() && fighters.some(f => !f.isBot && f.aimMode === 'mouse');
@@ -2245,6 +2248,7 @@ function netTick(dt) {
   if (NET.role === 'host') {
     if ((state === 'prep' || state === 'half') && NET.ready === round + 1 && NET.oppReady === round + 1 && plan[0].result.valid && !plan[0].busy) startOnlineRound();
     if (fighting() || state === 'timeup') { NET.snapT = (NET.snapT || 0) - dt; if (NET.snapT <= 0) { NET.snapT = 0.033; netPresence({ snap: buildSnap() }, true); } }
+    else if (state === 'ko') { NET.snapT = (NET.snapT || 0) - dt; if (NET.snapT <= 0) { NET.snapT = 0.2; netPresence({ snap: { st: 'ko', rd: round, ko: KO.winner ? KO.winner.slot : -1, sc: fighters.map(f => [f.score, f.roundScore[0], f.roundScore[1]]) } }); } }
     else if (state === 'results') {
       NET.snapT = (NET.snapT || 0) - dt; if (NET.snapT <= 0) { NET.snapT = 0.5; netPresence({ snap: buildSnap() }); }
       if (d.again && d.again !== NET.lastAgain) { NET.lastAgain = d.again; round = 0; fighters.forEach(f => { f.score = 0; f.roundScore = [0, 0]; f.heads = 0; f.bodies = 0; f.bonus = 0; }); NET.ready = 0; netPresence({ ready: 0 }); showPrep(); }
@@ -2348,6 +2352,7 @@ function guestApply(s) {
     applyEntities(s);
     return;
   }
+  if (st === 'ko') { if (state !== 'ko' && fighters.length === 2) { if (Array.isArray(s.sc)) s.sc.forEach((v, i) => { if (fighters[i]) { fighters[i].score = v[0] | 0; fighters[i].roundScore = [v[1] | 0, v[2] | 0]; } }); startKO(s.ko); } return; }
   if (st === 'results' && state !== 'results') { applyFighters(s.f); state = 'results'; showResults(); }
 }
 function applyFighters(F) {
@@ -2722,6 +2727,7 @@ function setupMatch() {
   showPrep();
 }
 function changeElement(side, el) {
+  if (round > 0) return; // no switching elements mid-match
   if (opts.mode === 'online' && NET.ready) setReady(false);
   if (plan[side].ctl) plan[side].ctl.abort();
   plan[side] = isBotSide(side) ? botPlan(el, plan[0]) : newPlan(el); sideEls[side] = el;
@@ -2739,9 +2745,99 @@ function startRound() {
   down.clear(); pressed.clear();
   hideScreen();
 }
+/* ---------- KO finale: the winner finishes the match with a move in their element ---------- */
+const KO = { t: 0, dur: 3.4, winner: null, loser: null, el: 'fire', bolts: [], hit: false };
+function startKO(winnerSlot) {
+  const [a, b] = fighters;
+  const w = winnerSlot !== undefined ? (winnerSlot < 0 ? null : fighters[winnerSlot]) : (a.score === b.score ? null : a.score > b.score ? a : b);
+  if (!w) { state = 'results'; showResults(); return; } // a draw gets no finisher
+  const l = opp(w);
+  Object.assign(KO, { t: 0, winner: w, loser: l, el: w.element, hit: false, bolts: [], x0: l.x, y0: l.y, vy: 0, vx: 0, seed: Math.random() * 100 });
+  state = 'ko'; clearArena(); slowmo = 0; hitstop = 0;
+  w.face = l.x > w.x ? 1 : -1; l.face = -w.face; w.dash = null; l.dash = null; l.shield = null; w.shield = null;
+  l.koRot = 0; l.koScale = 1; l.koAlpha = 1; w.vx = 0; l.vx = 0;
+}
+function koUpdate(dt) {
+  KO.t += dt; stepParticles(dt);
+  for (const t of texts) { t.life -= dt; t.y -= 40 * dt; } texts = texts.filter(t => t.life > 0);
+  shake = Math.max(0, shake - dt * 30);
+  const w = KO.winner, l = KO.loser, u = KO.t / KO.dur, el = KO.el, dir = Math.sign(l.x - w.x) || 1;
+  // winner: wind-up, then the finishing cast pose
+  w.castType = ({ fire: 'burst', water: 'wave', ice: 'projectile', lightning: 'strike', earth: 'wave', wind: 'orbit', light: 'strike', darkness: 'summon', antimatter: 'beam', steel: 'dash' })[el] || 'burst';
+  w.castUlt = true; w.castDur = 0.5; w.castAnim = u > 0.22 && u < 0.6 ? 0.25 : 0;
+  l.stun = u > 0.3 ? 1 : 0; l.hitDir = dir;
+  if (!KO.hit && u > 0.32) { KO.hit = true; shake = 18; impactFrame(l.x, chestY(l), el, true, 'radial', dir, true); burstParticles(l.x, chestY(l), el, 40, 520); }
+  const after = Math.max(0, (u - 0.32) / 0.68);
+  if (KO.hit) {
+    if (el === 'fire' || el === 'earth') { // launched by a pillar / spikes, tumbling
+      if (!KO.vy) KO.vy = el === 'earth' ? -1300 : -1100; KO.vy += 2300 * dt; l.y = Math.min(GROUND, l.y + KO.vy * dt); l.x += dir * 160 * dt; l.koRot += dir * 7 * dt * (l.y < GROUND ? 1 : 0);
+      if (el === 'fire' && Math.random() < 0.8) spawnP(KO.x0 + (Math.random() - 0.5) * 70, GROUND - Math.random() * 300 * (1 - after), 'fire', (Math.random() - 0.5) * 60, -200 - Math.random() * 300, 0.6, 4 + Math.random() * 5);
+    } else if (el === 'water') { // swept away by the wave
+      l.x = clamp(l.x + dir * 520 * dt * (1 - after * 0.6), 30, W - 30); l.y = GROUND - Math.sin(Math.min(1, after * 1.6) * Math.PI) * 120; l.koRot = dir * after * 1.4;
+    } else if (el === 'ice') { // frozen solid, then shattered
+      if (after > 0.45 && !KO.shattered) { KO.shattered = true; shake = 16; for (let k = 0; k < 40; k++) spawnP(l.x + (Math.random() - 0.5) * 50, l.y - Math.random() * 90, 'ice', (Math.random() - 0.5) * 700, -Math.random() * 600, 1.2, 4 + Math.random() * 5, 'rock'); }
+      if (KO.shattered) { l.koRot = Math.min(1.5, l.koRot + dir * 4 * dt); l.y = Math.min(GROUND, l.y + 400 * dt); }
+    } else if (el === 'lightning') { // struck again and again
+      if (KO.bolts.length < 4 && after > KO.bolts.length * 0.12) { KO.bolts.push({ t: 0.18, seed: Math.random() * 100 }); shake = 14; burstParticles(l.x, chestY(l), 'lightning', 18, 400); }
+      l.koRot = after > 0.6 ? Math.min(1.5, (after - 0.6) * 6) * dir : 0;
+    } else if (el === 'wind') { // lifted into a tornado and flung away
+      l.y = KO.y0 - after * after * 700; l.x = KO.x0 + Math.sin(after * 18) * 50 * (1 - after); l.koRot += 14 * dt;
+    } else if (el === 'light') { // dissolved into the light and lifted up
+      l.y = KO.y0 - after * 160; l.koAlpha = Math.max(0, 1 - after * 1.2);
+      if (Math.random() < 0.6) spawnP(l.x + (Math.random() - 0.5) * 40, l.y - Math.random() * 90, 'light', (Math.random() - 0.5) * 40, -80 - Math.random() * 120, 0.8, 3, 'glint');
+    } else if (el === 'darkness') { // pulled into a black hole
+      l.koScale = Math.max(0, 1 - after * 1.15); l.koRot += (2 + after * 18) * dt; l.y = KO.y0 - after * 40;
+    } else if (el === 'antimatter') { // erased from existence
+      l.koAlpha = Math.max(0, 1 - after * 1.4); if (Math.random() < 0.9) spawnP(l.x + (Math.random() - 0.5) * 40, l.y - Math.random() * 90, 'antimatter', (Math.random() - 0.5) * 300, (Math.random() - 0.5) * 300, 0.6, 3 + Math.random() * 4, 'glitch');
+    } else if (el === 'steel') { // cut down by a flurry of slashes
+      if (KO.bolts.length < 5 && after > KO.bolts.length * 0.08) { KO.bolts.push({ t: 0.16, seed: Math.random() * 100, a: (Math.random() - 0.5) * 1.6 }); shake = 10; spillBlood(l.x, chestY(l), dir, 1); }
+      l.koRot = after > 0.5 ? Math.min(1.5, (after - 0.5) * 5) * dir : 0;
+    }
+  }
+  for (const b of KO.bolts) b.t -= dt;
+  if (KO.t >= KO.dur) { state = 'results'; l.koRot = 0; l.koScale = 1; l.koAlpha = 1; l.stun = 0; w.castAnim = 0; showResults(); }
+}
+function drawKOWorld(front) {
+  const w = KO.winner, l = KO.loser; if (!w || !l) return;
+  const u = KO.t / KO.dur, after = Math.max(0, (u - 0.32) / 0.68), el = KO.el, col = elCol(el), dir = Math.sign(l.x - w.x) || 1;
+  ctx.save();
+  if (!front) {
+    // charging aura around the winner before the hit
+    if (u < 0.4) { const g = ctx.createRadialGradient(w.x, w.y - 40, 5, w.x, w.y - 40, 90 + u * 120); g.addColorStop(0, withA(col, 0.55)); g.addColorStop(1, withA(col, 0)); ctx.fillStyle = g; ctx.fillRect(w.x - 220, w.y - 260, 440, 300); }
+    if (el === 'fire' && KO.hit) { const h = 420 * Math.min(1, after * 3) * (1 - Math.max(0, after - 0.7) * 3); const g = ctx.createLinearGradient(0, GROUND - h, 0, GROUND); g.addColorStop(0, withA(EL2.fire, 0)); g.addColorStop(0.3, withA(col, 0.8)); g.addColorStop(1, withA(EL2.fire, 0.95)); glowOn(); ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(KO.x0 - 50, GROUND); ctx.quadraticCurveTo(KO.x0 - 20, GROUND - h * 0.6, KO.x0 + Math.sin(clock * 20) * 12, GROUND - h); ctx.quadraticCurveTo(KO.x0 + 20, GROUND - h * 0.6, KO.x0 + 50, GROUND); ctx.fill(); glowOff(); }
+    if (el === 'earth' && KO.hit) { ctx.fillStyle = col; ctx.strokeStyle = C.ink; ctx.lineWidth = 3; for (let k = -3; k <= 3; k++) { const hgt = Math.min(1, after * 4) * (140 - Math.abs(k) * 28) * (1 - Math.max(0, after - 0.75) * 4), x = KO.x0 + k * 26; ctx.beginPath(); ctx.moveTo(x - 16, GROUND); ctx.lineTo(x + (hash(k + KO.seed) - 0.5) * 10, GROUND - hgt); ctx.lineTo(x + 16, GROUND); ctx.closePath(); ctx.fill(); ctx.stroke(); } }
+    if (el === 'water' && KO.hit) { const wx = w.x + dir * after * 1100, hh = 170 * Math.sin(Math.min(1, after * 1.3) * Math.PI); ctx.fillStyle = withA(col, 0.75); ctx.beginPath(); ctx.moveTo(wx - dir * 500, GROUND); for (let k = 0; k <= 20; k++) { const x = wx - dir * 500 + dir * k * 25; ctx.lineTo(x, GROUND - hh * Math.sin(k / 20 * Math.PI) - Math.sin(clock * 9 + k) * 6); } ctx.lineTo(wx, GROUND); ctx.closePath(); ctx.fill(); }
+    if (el === 'wind' && KO.hit) { ctx.strokeStyle = withA(col, 0.8); ctx.lineWidth = 3; for (let k = 0; k < 14; k++) { const y = GROUND - k * 34, r = 20 + k * 9; ctx.beginPath(); ctx.ellipse(KO.x0 + Math.sin(clock * 6 + k) * 10, y, r, r * 0.25, 0, clock * 8 + k, clock * 8 + k + 4.4); ctx.stroke(); } }
+    if (el === 'light' && KO.hit) { const wd = 60 + Math.sin(clock * 30) * 6; glowOn(); const g = ctx.createLinearGradient(KO.x0 - wd, 0, KO.x0 + wd, 0); g.addColorStop(0, withA(EL2.light, 0)); g.addColorStop(0.5, withA(EL2.light, 0.95 * (1 - Math.max(0, after - 0.8) * 5))); g.addColorStop(1, withA(EL2.light, 0)); ctx.fillStyle = g; ctx.fillRect(KO.x0 - wd, 0, wd * 2, GROUND); glowOff(); }
+    if (el === 'darkness' && KO.hit) { const r = 30 + Math.min(1, after * 2) * 90 * (1 - Math.max(0, after - 0.85) * 6); const cx = KO.x0, cy = KO.y0 - 60; ctx.fillStyle = '#05010c'; ctx.beginPath(); ctx.arc(cx, cy, Math.max(0, r), 0, 7); ctx.fill(); ctx.strokeStyle = col; ctx.lineWidth = 3; for (let k = 0; k < 4; k++) { ctx.beginPath(); ctx.ellipse(cx, cy, r + 14 + k * 10, (r + 14 + k * 10) * 0.35, clock * (1 + k * 0.4), 0, 7); ctx.stroke(); } }
+  } else {
+    if (el === 'ice' && KO.hit && !KO.shattered) { const k = Math.min(1, after * 5); ctx.fillStyle = withA(col, 0.45 * k); ctx.strokeStyle = withA('#ffffff', 0.9 * k); ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(l.x - 34, l.y); ctx.lineTo(l.x - 40, l.y - 70); ctx.lineTo(l.x - 18, l.y - 104); ctx.lineTo(l.x + 22, l.y - 98); ctx.lineTo(l.x + 38, l.y - 60); ctx.lineTo(l.x + 32, l.y); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.beginPath(); ctx.moveTo(l.x - 20, l.y - 80); ctx.lineTo(l.x - 6, l.y - 40); ctx.stroke(); }
+    if (el === 'lightning') for (const b of KO.bolts) if (b.t > 0) { glowOn(); ctx.strokeStyle = EL2.lightning; ctx.lineWidth = 6 * b.t / 0.18 + 2; ctx.beginPath(); let x = l.x + (hash(b.seed) - 0.5) * 60, y = 0; ctx.moveTo(x, y); while (y < l.y - 40) { y += 40; x += (hash(b.seed + y) - 0.5) * 60; ctx.lineTo(x, y); } ctx.lineTo(l.x, chestY(l)); ctx.stroke(); glowOff(); }
+    if (el === 'steel') for (const b of KO.bolts) if (b.t > 0) { ctx.save(); ctx.translate(l.x, chestY(l)); ctx.rotate(b.a); ctx.globalAlpha = b.t / 0.16; ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.moveTo(-160, -2); ctx.quadraticCurveTo(0, -14, 160, -2); ctx.quadraticCurveTo(0, 8, -160, 2); ctx.closePath(); ctx.fill(); ctx.restore(); }
+  }
+  ctx.restore();
+}
+function drawKOScreen() {
+  const u = KO.t / KO.dur; if (!KO.winner) return;
+  ctx.save();
+  if (KO.el === 'lightning' && KO.bolts.some(b => b.t > 0.12)) { ctx.fillStyle = 'rgba(255,255,240,0.35)'; ctx.fillRect(0, 0, W, H); }
+  if (KO.el === 'light' && KO.hit) { ctx.fillStyle = `rgba(255,252,235,${0.35 * Math.max(0, 1 - (u - 0.32) * 2)})`; ctx.fillRect(0, 0, W, H); }
+  // cinematic bars
+  const bar = Math.min(1, u * 5) * 58; ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar);
+  if (u > 0.55) {
+    const k = Math.min(1, (u - 0.55) / 0.12), sc = 1 + (1 - k) * 1.6;
+    ctx.translate(W / 2, H / 2 - 30); ctx.scale(sc, sc); ctx.rotate(-0.06 * (1 - k)); ctx.globalAlpha = k;
+    ctx.textAlign = 'center'; ctx.font = '400 150px Anton, Impact, sans-serif';
+    ctx.lineWidth = 14; ctx.lineJoin = 'round'; ctx.strokeStyle = '#000'; ctx.strokeText('K.O.', 0, 0);
+    ctx.fillStyle = elCol(KO.el); ctx.fillText('K.O.', 0, 0);
+    ctx.font = '400 30px Anton, Impact, sans-serif'; ctx.lineWidth = 6; const wl = sideLabel(KO.winner.slot), sub = `${wl} ${wl === 'You' ? 'win' : 'wins'} with ${elName(KO.el)}`;
+    ctx.strokeText(sub, 0, 56); ctx.fillStyle = '#fff'; ctx.fillText(sub, 0, 56);
+  }
+  ctx.restore();
+}
 function afterRound() {
   if (round === 0) { round = 1; state = 'half'; plan.forEach(p => { p.status = null; }); if (opts.mode === 'bot') plan[1] = botPlan(plan[1].element, plan[0]); showPrep(); }
-  else { state = 'results'; showResults(); }
+  else startKO();
 }
 
 /* ---------- screens ---------- */
@@ -3114,7 +3210,7 @@ screenEl.addEventListener('click', e => {
   if (btn.dataset.impact) { impactOn = btn.dataset.impact === 'on'; try { localStorage.setItem('stick-impact', impactOn ? 'on' : 'off'); } catch (e) {} showSettings(); return; }
   if (btn.dataset.pel) { sideEls[0] = btn.dataset.pel; showPracticeMenu(); return; }
   if (btn.dataset.bel) { BUILD.el = btn.dataset.bel; BUILD.pv = null; BUILD.draft = null; showBuild(); return; }
-  if (btn.dataset.prepel) { const [sd, id] = btn.dataset.prepel.split(':'); PREP_PV = null; if (Number(sd) === 0 || opts.mode === 'online') sideEls[0] = id; changeElement(Number(sd), id); return; }
+  if (btn.dataset.prepel && round === 0) { const [sd, id] = btn.dataset.prepel.split(':'); PREP_PV = null; if (Number(sd) === 0 || opts.mode === 'online') sideEls[0] = id; changeElement(Number(sd), id); return; }
   if (btn.dataset.pvid) { const id = btn.dataset.pvid; BUILD.pv = { id, ult: !!libraryFor(BUILD.el).ults.find(x => x.id === id) }; BUILD.draft = null; showBuild(); return; }
   if (btn.dataset.pvslot) { const [sd, sl] = btn.dataset.pvslot.split(':').map(Number); PREP_PV = { side: sd, slot: sl }; showPrep(); screenEl.scrollTop = 0; return; }
   const side = Number(btn.dataset.side);
@@ -3395,7 +3491,7 @@ function prepColumn(side, half) {
   if (!p.ids) p.ids = loadoutIds(el);
   return `<section class="col" style="--el: var(--el-${el})">
     <div class="col-head"><h2>${elName(el)}</h2><span class="who">${esc(sideLabel(side))}${half && f ? `, round 1 score ${f.roundScore[0]}` : ''}</span></div>
-    ${elPicker('prepel', el).replace(/data-prepel="/g, `data-prepel="${side}:`)}
+    ${half ? `<p class="note">Element locked for this match: <b>${elName(el)}</b>. You can still swap moves.</p>` : elPicker('prepel', el).replace(/data-prepel="/g, `data-prepel="${side}:`)}
     <p class="passive"><b>${elName(el)}:</b> ${esc(ELEMENTS[el].passive)}</p>
     <div class="budget" data-budget="${side}">${budgetHTML(side)}</div>
     <div class="moves">
