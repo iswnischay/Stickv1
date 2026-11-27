@@ -3580,9 +3580,9 @@ function showSettings() {
     ${RELAY_HTTP && ACC.user ? `<h3 style="margin-top:18px">Doolers</h3>
     <p class="note">You have ${DL(WALLET.balance)}. Doolers are what you spend to keep a move you made with AI (${DL(MOVE_PRICE)} each; slider edits are free).</p>
     <ul class="earn-list">
-      <li><b>Beat the bot</b> on any level: you get one dooler for every hit you landed on it. Lose and you get nothing.</li>
-      <li><b>Beat a friend</b> online: you get the hits you landed minus the hits they landed. Half comes from the game and half from your friend’s balance (the game covers any odd one).</li>
-      <li>Head hits and body hits each count as one hit.</li>
+      <li><b>Beat the bot</b> on any level: you get one dooler for every point you scored (a head hit is 2, a body hit 1). Lose and you get nothing.</li>
+      <li><b>Beat a friend</b> online: you get your score minus their score. Half comes from the game and half from your friend’s balance (the game covers any odd one).</li>
+      <li>Points from attacks you reflect or deflect count too.</li>
     </ul>
     <h3 style="margin-top:18px">Tester code</h3>
     <p class="note">Have a tester code? Each time you enter it you get ${DL(500)}.</p>
@@ -3913,9 +3913,9 @@ function showLeaderboard() {
     .finally(() => { LB.busy = false; if (state === 'leaderboard') showLeaderboard(); });
 }
 // Pay out once per finished match. Only a gain is shown; losses, draws and errors stay quiet.
-// Bot: one dooler per hit you landed, only when you win. Online: the winner gets (their hits - the loser's hits),
+// Bot: your final score in doolers, only when you win. Online: the winner gets (their score - the loser's score),
 // half from the loser and half from the game (the game covers any odd one).
-const hitCount = f => (f.heads | 0) + (f.bodies | 0);
+const hitCount = f => Math.max(0, f.score | 0);
 function settleDoolers(winner) {
   const say = html => { const b = screenEl.querySelector('[data-dlres]'); if (b) { b.innerHTML = html; b.className = 'dl-result win'; } };
   if (!RELAY_HTTP || !ACC.user || !winner) return;
@@ -3925,14 +3925,14 @@ function settleDoolers(winner) {
     if (winner.slot !== 0) return;
     const hits = hitCount(fighters[0]); if (!hits) return;
     walletCall('/wallet/bot', { level: opts.level, hits }).then(r => {
-      if (r && r.ok && r.gained > 0) say(`+${DL(r.gained)} for the ${r.gained === 1 ? 'hit' : 'hits'} you landed on the ${esc(opts.level)} bot`);
+      if (r && r.ok && r.gained > 0) say(`+${DL(r.gained)} for your ${r.gained === 1 ? 'point' : 'points'} against the ${esc(opts.level)} bot`);
     });
   } else if (opts.mode === 'online' && NET.mid) {
     const role = NET.role, winRole = winner.slot === 0 ? 'host' : 'guest';
     const hits = { host: hitCount(fighters[0]), guest: hitCount(fighters[1]) };
     const report = tries => walletCall('/wallet/report', { match: NET.mid, role, winner: winRole, hits }).then(r => {
       if (!r) return;
-      if (r.settled) { const m = r.mine || 0; walletRefresh(); if (m > 0) say(`+${DL(m)} for the win (${hits.host > hits.guest ? hits.host - hits.guest : hits.guest - hits.host} more hits than your opponent)`); }
+      if (r.settled) { const m = r.mine || 0; walletRefresh(); if (m > 0) say(`+${DL(m)} for the win (${hits.host > hits.guest ? hits.host - hits.guest : hits.guest - hits.host} more points than your opponent)`); }
       else if (r.pending && tries > 0) setTimeout(() => report(tries - 1), 2500);
     });
     report(6);

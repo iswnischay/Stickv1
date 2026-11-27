@@ -208,13 +208,13 @@ export class Quota {
 /* ---------- doolers: the in-game currency ----------
    Balances live here on the server (one Durable Object per player), never in the browser, so nobody can edit their own.
      GET  /wallet                          -> { balance }
-     POST /wallet/bot    { level, hits }   -> win against the bot: one dooler for every hit you landed
+     POST /wallet/bot    { level, hits }   -> win against the bot: your final score in doolers ("hits" carries the score)
      POST /wallet/spend  { reason, ref }   -> pay 100 to keep an AI-built move
      POST /wallet/report { match, role, winner, hits: { host, guest } }  -> online result. When both games agree,
-                                              the winner gets (their hits - the loser's hits): half from the loser,
+                                              the winner gets (their score - the loser's score): half from the loser,
                                               half from the game (the game covers any odd one, so no fractions)
    New players start with 100. Earnings have daily caps and bot wins are rate-limited to stop farming. */
-const DOOLERS = { coupon: 500, welcome: 100, move: 100, maxHits: 150, bot: { easy: 1, normal: 1, hard: 1 }, botCapPerDay: 800, matchCapPerDay: 1500, botMinGapMs: 50000 };
+const DOOLERS = { coupon: 500, welcome: 100, move: 100, maxHits: 300, bot: { easy: 1, normal: 1, hard: 1 }, botCapPerDay: 800, matchCapPerDay: 1500, botMinGapMs: 50000 };
 async function authUid(request, env) {
   const tok = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
   if (env.DEV_FAKE_AUTH === '1' && tok.startsWith('dev:')) return tok.slice(4);
@@ -322,7 +322,7 @@ export class Match {
     if (winnerRole === 'host' || winnerRole === 'guest') {
       const win = m.reports[winnerRole], lose = m.reports[winnerRole === 'host' ? 'guest' : 'host'];
       st.winnerUid = win && win.uid; st.loserUid = lose && lose.uid;
-      // the winner earns the hit difference: half from the loser (rounded down), the rest from the game
+      // the winner earns the score difference: half from the loser (rounded down), the rest from the game
       const hits = win.hits, other = winnerRole === 'host' ? 'guest' : 'host', diff = Math.max(0, hits[winnerRole] - hits[other]);
       const loserShare = Math.floor(diff / 2), gameShare = diff - loserShare;
       let fromLoser = 0;

@@ -136,8 +136,8 @@ Doolers are the coins you earn by winning and spend on AI-built moves.
 
 ### Earning
 
-- **Beat the bot:** you get **1 dooler for every hit you landed** on it. Only a win pays; a loss pays nothing.
-- **Beat a friend online:** you get **your hits minus their hits**. Half comes from the game and half from your friend's balance (the game pays any odd dooler, so there are never fractions). Example: you land 20 hits and they land 7, so you win 13 doolers: 7 from the game and 6 from your friend.
+- **Beat the bot:** you get **your final score in doolers** (a head hit is 2, a body hit 1, reflected hits count too). Only a win pays; a loss pays nothing.
+- **Beat a friend online:** you get **your score minus their score**. Half comes from the game and half from your friend's balance (the game pays any odd dooler, so there are never fractions). Example: you win 20 to 7, so you get 13 doolers: 7 from the game and 6 from your friend.
 - **Fair play limits:**
   - bot rewards need about a minute between wins, and pay at most 800 a day
   - online winnings top out at 1,500 a day
