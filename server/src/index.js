@@ -23,6 +23,10 @@ export default {
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
       return walletRoute(request, env, cors, url.pathname);
     }
+    if (url.pathname === '/leaderboard' || url.pathname === '/stats/played') {
+      if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+      return statsRoute(request, env, cors, url.pathname);
+    }
     if (url.pathname === '/ai/move') {
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
       if (request.method !== 'POST') return json({ error: 'method' }, 405, cors);
@@ -223,7 +227,11 @@ async function walletRoute(request, env, cors, path) {
   let body = {}; if (request.method === 'POST') { try { body = await request.json(); } catch (e) {} }
   const w = wallet(env, uid);
   if (path === '/wallet') return json(await callDO(w, '/get', {}), 200, cors);
-  if (path === '/wallet/bot') return json(await callDO(w, '/bot', { level: String(body.level || ''), hits: Math.max(0, Math.min(DOOLERS.maxHits, Math.floor(Number(body.hits) || 0))) }), 200, cors);
+  if (path === '/wallet/bot') {
+    const r = await callDO(w, '/bot', { level: String(body.level || ''), hits: Math.max(0, Math.min(DOOLERS.maxHits, Math.floor(Number(body.hits) || 0))) });
+    if (r.gained > 0) await boardWon(env, uid, r.gained);
+    return json(r, 200, cors);
+  }
   if (path === '/wallet/spend') return json(await callDO(w, '/spend', { amount: DOOLERS.move, reason: String(body.reason || 'move').slice(0, 40), ref: String(body.ref || '').slice(0, 40) }), 200, cors);
   if (path === '/wallet/coupon') {
     // tester code: kept as a secret on the server (TESTER_CODE), never in the page
@@ -258,6 +266,7 @@ export class Wallet {
     const path = new URL(request.url).pathname; let b = {}; try { b = await request.json(); } catch (e) {}
     const w = await this.load();
     if (path === '/get') return json({ balance: w.balance });
+    if (path === '/wonsum') return json({ won: (w.log || []).filter(e => e.d > 0 && /^(bot |won online)/.test(e.r || '')).reduce((a, e) => a + e.d, 0) });
     if (path === '/bot') {
       if (!DOOLERS.bot[b.level]) return json({ ok: false, balance: w.balance, error: 'level' });
       const amt = Math.max(0, Math.floor(Number(b.hits) || 0)); if (!amt) return json({ ok: false, gained: 0, balance: w.balance });
@@ -320,6 +329,7 @@ export class Match {
       if (lose && lose.winner === winnerRole && loserShare > 0) { const r = await callDO(wallet(this.env, lose.uid), '/debit', { amount: loserShare, reason: 'lost online' }); fromLoser = r.taken || 0; }
       const r2 = diff > 0 ? await callDO(wallet(this.env, win.uid), '/credit', { amount: gameShare + fromLoser, reason: 'won online' }) : { gained: 0 };
       st.won = r2.gained || 0; st.lost = fromLoser;
+      if (st.won > 0) await boardWon(this.env, win.uid, st.won);
     }
     m.settled = st; await this.state.storage.put('m', m);
   }
@@ -331,7 +341,79 @@ export class Match {
       const other = one.winner === 'host' ? 'guest' : 'host', diff = Math.max(0, one.hits[one.winner] - one.hits[other]);
       const r = diff > 0 ? await callDO(wallet(this.env, one.uid), '/credit', { amount: diff - Math.floor(diff / 2), reason: 'won online (opponent left)' }) : { gained: 0 };
       m.settled = { winner: one.winner, won: r.gained || 0, lost: 0, winnerUid: one.uid, loserUid: null };
+      if (r.gained > 0) await boardWon(this.env, one.uid, r.gained);
     } else m.settled = { winner: 'none', won: 0, lost: 0 };
     await this.state.storage.put('m', m);
+  }
+}
+
+
+/* ---------- leaderboard ----------
+     GET  /leaderboard                -> { players: [{ name, won, top, games }] }  top 50 by doolers won
+     POST /stats/played { element }   -> counts a finished match (bot or online) toward "most played"
+   Only doolers won from beating the bot or a friend count. Tester codes, the welcome bonus and refunds never do.
+   The username is read from the player's own Firestore profile with their sign-in token, so nobody can post as someone else. */
+const ELEMENTS = ['light', 'wind', 'fire', 'water', 'earth', 'darkness', 'antimatter', 'steel', 'lightning', 'ice'];
+const board = env => env.BOARD.get(env.BOARD.idFromName('global'));
+async function boardWon(env, uid, amount) {
+  try { if (!env.BOARD) return; const seed = (await callDO(wallet(env, uid), '/wonsum', {})).won || 0; await callDO(board(env), '/won', { uid, amount, seed }); } catch (e) {}
+}
+async function usernameFor(env, uid, tok) {
+  try {
+    const r = await fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/users/${encodeURIComponent(uid)}`, { headers: { authorization: 'Bearer ' + tok } });
+    if (!r.ok) return '';
+    const j = await r.json(); const v = j && j.fields && j.fields.username && j.fields.username.stringValue;
+    return /^[a-z0-9_]{3,16}$/.test(v || '') ? v : '';
+  } catch (e) { return ''; }
+}
+async function statsRoute(request, env, cors, path) {
+  if (!env.BOARD) return json({ error: 'off', players: [] }, 200, cors);
+  if (path === '/leaderboard') return json(await callDO(board(env), '/top', {}), 200, { ...cors, 'cache-control': 'max-age=15' });
+  if (request.method !== 'POST') return json({ error: 'method' }, 405, cors);
+  const tok = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  let uid; try { uid = await authUid(request, env); } catch (e) { return json({ error: 'auth' }, 401, cors); }
+  let body = {}; try { body = await request.json(); } catch (e) {}
+  const el = ELEMENTS.includes(body.element) ? body.element : '';
+  if (!el) return json({ error: 'bad_request' }, 400, cors);
+  const name = env.DEV_FAKE_AUTH === '1' && tok.startsWith('dev:') ? String(body.name || uid).toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 16) : await usernameFor(env, uid, tok);
+  // the first time we see a player, seed their total from wins already in their wallet history
+  const seed = (await callDO(wallet(env, uid), '/wonsum', {})).won || 0;
+  return json(await callDO(board(env), '/played', { uid, name, el, seed }), 200, cors);
+}
+
+// One object holds the whole leaderboard: per player { name, won, played: { element: count }, games }.
+export class Board {
+  constructor(state) { this.state = state; this.all = null; }
+  async load() {
+    if (this.all) return this.all;
+    this.all = new Map(); const rows = await this.state.storage.list({ prefix: 'p:' });
+    for (const [k, v] of rows) this.all.set(k.slice(2), v);
+    return this.all;
+  }
+  async put(uid, rec) { this.all.set(uid, rec); await this.state.storage.put('p:' + uid, rec); }
+  async fetch(request) {
+    const path = new URL(request.url).pathname; let b = {}; try { b = await request.json(); } catch (e) {}
+    const all = await this.load();
+    if (path === '/won') {
+      let rec = all.get(b.uid);
+      // a new player starts from their wallet history, which already includes this win
+      if (!rec) rec = { name: '', won: Math.max(0, Number(b.seed) || 0), played: {}, games: 0 };
+      else rec.won += Math.max(0, Math.floor(Number(b.amount) || 0));
+      await this.put(b.uid, rec); return json({ ok: true });
+    }
+    if (path === '/played') {
+      let rec = all.get(b.uid);
+      if (!rec) rec = { name: '', won: Math.max(0, Number(b.seed) || 0), played: {}, games: 0 };
+      if (Date.now() - (rec.lastPlayed || 0) < 15000) { if (b.name) rec.name = b.name; await this.put(b.uid, rec); return json({ ok: false, error: 'too_soon' }); }
+      rec.lastPlayed = Date.now(); rec.games++; rec.played[b.el] = (rec.played[b.el] || 0) + 1; if (b.name) rec.name = b.name;
+      await this.put(b.uid, rec); return json({ ok: true });
+    }
+    if (path === '/top') {
+      const players = [...all.values()].filter(r => r.name && (r.won > 0 || r.games > 0))
+        .sort((a, c) => c.won - a.won || c.games - a.games).slice(0, 50)
+        .map(r => { let top = '', n = 0; for (const [e, c] of Object.entries(r.played || {})) if (c > n) { n = c; top = e; } return { name: r.name, won: r.won, top, games: r.games }; });
+      return json({ players });
+    }
+    return json({ error: 'not_found' }, 404);
   }
 }

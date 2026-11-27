@@ -3880,6 +3880,37 @@ function showResults() {
     <p class="dl-result" data-dlres></p>
   </div>`);
   settleDoolers(winner);
+  reportPlayed();
+}
+// Count a finished match toward the player's "most played" element on the leaderboard (bot and online, not practice).
+function reportPlayed() {
+  if (!RELAY_HTTP || !ACC.user || (opts.mode !== 'bot' && opts.mode !== 'online')) return;
+  const me = fighters[opts.mode === 'online' ? (NET.side || 0) : 0]; if (!me || !me.element) return;
+  const key = settleDoolers.done; if (reportPlayed.done === key) return; reportPlayed.done = key;
+  walletCall('/stats/played', { element: me.element }); LB.at = 0;
+}
+/* ---------- leaderboard ---------- */
+const LB = { data: null, at: 0, busy: false, err: '' };
+function showLeaderboard() {
+  state = 'leaderboard';
+  const rows = (LB.data || []).map((p, i) => `<tr class="${ACC.username && p.name === ACC.username ? 'me' : ''}">
+      <td class="lb-rank r${i + 1}">${i + 1}</td>
+      <td class="lb-name">@${esc(p.name)}</td>
+      <td>${p.top ? `<span class="lb-el" style="--el: var(--el-${p.top})">${elName(p.top)}</span>` : '<span class="note">—</span>'}</td>
+      <td class="lb-won">${DL(p.won)}</td></tr>`).join('');
+  showScreen(`<div class="narrow lb">
+    ${screenHead('Leaderboard', 'menu', 'The top 50 players by doolers won from beating the bot and friends. Tester codes and the welcome bonus don’t count.')}
+    ${!RELAY_HTTP ? '<p class="status err">The leaderboard isn’t available on this copy of the game.</p>'
+      : LB.data == null ? `<p class="note pulse">${LB.err ? esc(LB.err) : 'Loading the leaderboard…'}</p>`
+      : !LB.data.length ? '<p class="note">No one is on the board yet. Win a match to be the first.</p>'
+      : `<table class="lb-table"><thead><tr><th>#</th><th>Player</th><th>Most played</th><th>Doolers won</th></tr></thead><tbody>${rows}</tbody></table>`}
+    <div class="go"><button class="ghost pill" data-action="lb-refresh">Refresh</button><button data-action="menu">Back to menu</button></div>
+  </div>`);
+  if (!RELAY_HTTP || LB.busy || (LB.data && Date.now() - LB.at < 20000)) return;
+  LB.busy = true; LB.err = '';
+  fetch(RELAY_HTTP + '/leaderboard').then(r => r.json()).then(j => { LB.data = Array.isArray(j.players) ? j.players : []; LB.at = Date.now(); })
+    .catch(() => { LB.err = 'Couldn’t reach the leaderboard. Try Refresh in a moment.'; })
+    .finally(() => { LB.busy = false; if (state === 'leaderboard') showLeaderboard(); });
 }
 // Pay out once per finished match. Only a gain is shown; losses, draws and errors stay quiet.
 // Bot: one dooler per hit you landed, only when you win. Online: the winner gets (their hits - the loser's hits),
@@ -3962,6 +3993,8 @@ screenEl.addEventListener('click', e => {
     case 'play': if (needLogin()) { showLogin(); break; } showPlay(); break;
     case 'bot-setup': showBotSetup(); break;
     case 'practice': if (needLogin()) { showLogin(); break; } showPracticeMenu(); break;
+    case 'leaderboard': showLeaderboard(); break;
+    case 'lb-refresh': LB.data = null; LB.at = 0; showLeaderboard(); break;
     case 'build': if (needLogin()) { showLogin(); break; } BUILD.el = sideEls[0]; BUILD.pv = null; BUILD.draft = null; BUILD.msg = null; showBuild(); walletRefresh().then(() => { if (state === 'build') { const y = screenEl.scrollTop; showBuild(); screenEl.scrollTop = y; } }); break;
     case 'start-bot': settleDoolers.n = (settleDoolers.n || 0) + 1; opts.mode = 'bot'; PREP_PV = null; setupMatch(); updateLegend(); break;
     case 'practice-start': startPractice(); break;
@@ -4214,6 +4247,7 @@ function showMenu() {
       <button class="home-card primary" data-action="play"><span class="hc-title">Play</span><span class="hc-sub">Bot or a friend online</span></button>
       <button class="home-card" data-action="practice"><span class="hc-title">Practice</span><span class="hc-sub">Try your moves on a dummy</span></button>
       <button class="home-card" data-action="build"><span class="hc-title">Build</span><span class="hc-sub">Watch, make and edit moves</span></button>
+      <button class="home-card" data-action="leaderboard"><span class="hc-title">Leaderboard</span><span class="hc-sub">Top players by doolers won</span></button>
     </div>
     <div class="home-links"><button class="ghost pill" data-action="controls">Controls</button>${STANDALONE ? '<button class="ghost pill" data-action="settings">Settings</button>' : ''}${ACC.user ? '<button class="ghost pill" data-action="username">Change name</button><button class="ghost pill" data-action="signout">Sign out</button>' : ''}</div>
   </div>`);

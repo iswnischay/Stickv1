@@ -1,105 +1,197 @@
 # Stick v1
 
-*Stick vs 1*: one stick figure against one opponent.
+**Stick vs 1**: one stick figure against one opponent, ten elements, and moves you design yourself.
 
-A stick-figure fighting game. Pick one of 10 elements, build four moves and an ultimate with sliders, then fight a bot (which picks its own random element and moves) or anyone online with a 5-letter code.
+▶ **Play it here:** https://iswnischay.github.io/Stickv1/
 
-## How it plays
+Pick an element, load four moves and an ultimate, and fight a bot or a friend. Every hit freezes into a hand-drawn impact frame, every element has its own finishing animation, and you can build your own moves, or describe one to the AI and watch it come to life.
 
-- **Play**: against the bot (it picks a random element and kit) or online with a friend by code. In prep you pick your element and swap between moves you own; stats can't be edited mid-match.
-- **Practice**: pick an element and try your moves on a dummy with endless mana.
-- **Build**: browse every element's moves, click any move to watch it in action, and make your own moves or ultimates with sliders. Saved moves show up in the swap lists in prep.
+---
 
-## Accounts and the AI move builder
+## Getting started
 
-Sign-in is optional (Google, through Firebase). Signed-in players pick a unique username, their moves are saved to their account, and they can use **Build → Describe it to the AI**: write an idea ("five swords of light thrown in a fan", "blind the enemy so their screen goes dark for 5 seconds"), watch the move the AI builds, ask for changes, then add it to your moves. The AI only combines the game's building blocks, and every move is trimmed to fit the normal limits, so AI moves are never overpowered. Each player gets 40 AI moves a day.
+1. Open the game and **sign in with Google**.
+2. Pick a **username** (3–16 letters, numbers or `_`). Other players see it on the leaderboard.
+3. You start with **100 doolers**, the in-game coins (the little money-eyes face).
 
-Setup (once):
-0. Add the Firebase web API key as the repository secret `FIREBASE_API_KEY` (Firebase console → Project settings → Your apps → Web app → `apiKey`). For local testing put it in `.env.local` as `VITE_FIREBASE_API_KEY`.
-1. Firebase project `stickv1-36a11`: Authentication → Sign-in method → Google (on). Authentication → Settings → Authorized domains → add `YOUR-USERNAME.github.io`.
-2. Firestore Database → Rules: paste the contents of `firestore.rules` and **Publish**.
-3. Get a free Gemini key at aistudio.google.com and add it as the repository secret `GEMINI_API_KEY`. The workflow hands it to the Cloudflare relay; it never appears in the web page.
+From the main menu you can go to:
+
+| | |
+|---|---|
+| **Play** | Fight the bot (Easy, Normal or Hard) or a friend online. |
+| **Practice** | Try any element's moves on a training dummy with endless mana. Nothing is scored. |
+| **Build** | Watch every move in action, tweak moves with sliders, or make brand-new ones with the AI. |
+| **Leaderboard** | The top players by doolers won. |
+
+There's also **Controls** (change any key or button) and **Settings**, where you can turn impact frames or blood on and off, read the dooler rules, and enter a tester code.
+
+---
+
+## How a match works
+
+- **Prep:** pick your element and choose which of your moves to bring: four moves plus one ultimate. The bot picks its own random element and kit.
+- **Two rounds**, 2 minutes each by default (1:00 and 0:30 are options against the bot).
+- **Half time:** see what landed in round 1 and swap moves if you want. Your element stays the same for the whole match. Mana and the ultimate meter reset for round 2.
+- **Most points after both rounds wins.** Equal points is a draw.
+- Rematch with the same moves, or press **Play again** online. You stay connected to your friend between matches.
+
+### Scoring
+
+| What happened | Points |
+|---|---|
+| Hit to the **head** | 2 |
+| Hit to the **body** | 1 |
+| An attack you **reflected** or **deflected** hits them | counts for you |
+| Lightning hit on someone standing in a water zone | +1 bonus |
+
+Moves with 0 damage (shields, some dashes, blinds) score nothing, but they set up the moves that do.
+
+### The basics
+
+- **Mana** fills over time and when you land hits. Every move costs mana and has its own cooldown.
+- **Ultimate:** the meter fills as you score. When it's full, your ultimate is ready: a big move with a full-screen flash.
+- **Dodge:** a quick roll you can't be hit during. Hold a direction to choose which way. It has a short cooldown, so time it.
+- **Jumping:** tap again in the air to double jump, hold for a higher jump, press down to drop through platforms or fall fast.
+- **Aiming** is automatic: your moves track the opponent.
+- **Effects** some moves carry:
+  - **blind** turns the enemy's screen white (light) or black (darkness) for a moment, and they can't use moves
+  - **slow**
+  - **push**
+  - **pull**
+  - **reflect**, on shields
+  - **homing**
+  - **curve**, which weaves and slips around shields
+  - **pierce**, which keeps going after a hit
+
+---
+
+## The ten elements
+
+Each element has its own look, its own passive ability, its own impact frames and its own finishing animation when someone wins.
+
+| Element | Passive | Starter moves | Ultimate | Finisher |
+|---|---|---|---|---|
+| **Light** | Light beams clear away enemy zones they pass through. | Swords of Light · Flash · Light Step · Mirror Shield | Sword of Judgment | PURIFIED |
+| **Darkness** | Shadow shots are nearly invisible until they're close. | Shadow Fang · Eclipse · Shade Step · Watcher | Nightfall | CONSUMED |
+| **Ice** | Every scoring ice hit slows the target briefly. | Icicle Volley · Frost Shield · Frost Mine · Blizzard | Glacier Spikes | SHATTERED |
+| **Fire** | Fire shots melt ice shots they touch. | Fireball · Fire Mine · Blaze Step · Flame Pillar | Meteor Rain | INCINERATED |
+| **Water** | Water and fire cancel each other out. | Water Jet · Bubble Shield · Tidal Wave · Whirlpool | Tsunami | DROWNED |
+| **Earth** | Earth shields block everything, even curving and antimatter attacks. Earth bursts launch foes upward. | Boulder · Stone Wall · Quicksand · Fault Line | Earth Shatter | BURIED |
+| **Wind** | Wind bursts bat slow shots back at the thrower. | Wind Blades · Gust · Tailwind · Storm Eye | Hurricane | SWEPT AWAY |
+| **Antimatter** | Antimatter erases enemy shots and passes through shields (except earth). | Null Orb · Annihilation Beam · Phase Shift · Collapse | Singularity | ERASED |
+| **Steel** | Steel slashes can land head hits. Blocking with a steel shield gives back mana. | Blade Slash · Thrown Swords · Lunge · Parry | Thousand Blades | SEVERED |
+| **Lightning** | Lightning hits on someone in water score a bonus point. | Bolt · Spark Ball · Flash Step · Tesla Coil | Thunderstorm | THUNDERSTRUCK |
+
+### Some moves worth watching (open them in **Build**)
+
+- **Swords of Light:** three swords of light appear in a fan behind you, lock on, then fire one after another.
+- **Sword of Judgment:** a glowing circle opens in the sky, a giant sword slides out, shakes, and drops onto the enemy.
+- **Shade Step:** sink into a puddle of ink and rise out of another one somewhere else.
+- **Nightfall:** a black moon rises, the arena goes dark, and shadow hands reach up out of a pool.
+- **Frost Shield:** a crystal dome that cracks with every block and shatters into shards when it ends.
+- **Glacier Spikes:** crystal spikes race along the floor and leave a frozen wall that falls apart behind them.
+
+### Animations
+
+- **Impact frames:** every hit freezes for a split second into a drawn frame in the element's colours: forked lightning, cracked glass for ice, ink splats for darkness, a lens glint for light, and more. Head hits and ultimates get longer, bigger frames. You can turn them off in Settings.
+- **Finishers:** when the match ends, the winner's element plays its own finishing animation over the loser (burned up, frozen and shattered, swept off the screen, erased...).
+- **Blood:** small droplets on hits, which you can turn off in Settings.
+
+---
+
+## Build your own moves
+
+Open **Build**, pick an element and click any move to watch it.
+
+- **Edit move:** change a move's damage, speed, size, count, duration, effects and shape with sliders. Slider edits are **free**.
+- **Make a move:** describe an idea, for example *"five swords of light thrown in a fan"* or *"a ring of fire that explodes around me"*. The AI builds it from the game's building blocks and you watch it straight away.
+  - **Keep it:** costs **100 doolers**, and the move is yours to equip.
+  - **Save as draft:** free. Come back and improve it later, then pay when you're ready.
+  - **Improve it:** describe a change and the AI reworks the move.
+  - Each player can make up to 40 AI moves a day.
+
+Every move must fit a power budget (four moves share one budget, the ultimate has its own), so nothing you build, by hand or by AI, can be overpowered.
+
+The building blocks:
+
+| Block | What it does |
+|---|---|
+| Projectile | thrown or shot at the target |
+| Beam | instant line |
+| Burst | blast around you |
+| Zone | lingering area |
+| Dash | quick move |
+| Shield | blocks attacks |
+| Rain | things fall around the target |
+| Strike | marked circle that blasts after a delay |
+| Wave | travels along the ground; jump over it |
+| Trap | hidden rune |
+| Summon | a helper that shoots on its own |
+
+---
 
 ## Doolers
 
-Doolers are the in-game currency (shown with the money-eyes coin). New players start with 100.
+Doolers are the coins you earn by winning and spend on AI-built moves.
 
-- **Beat the bot:** one dooler for every hit you landed on it (head or body), on any level. Wins only; at least 50 seconds between rewards, 800 a day max.
-- **Beat a friend online:** your hits minus their hits. Half comes from the loser's balance (rounded down) and the rest from the game, so there are never fractions. Both games report the result and hit counts, and doolers only move when they agree. If the loser closes the game, the winner still gets the game's half after 90 seconds.
-- **Spend:** keeping a move built by the AI costs 100. Without enough doolers you can save it as a draft, keep improving it with the AI, and pay for it later. Slider edits stay free.
+### Earning
 
-**Tester code:** add a repository secret `TESTER_CODE` (any word you like). Signed-in players who enter it under Settings → Tester code get 500 doolers each time. The code stays on the server and never appears in the page.
+- **Beat the bot:** you get **1 dooler for every hit you landed** on it. Only a win pays; a loss pays nothing.
+- **Beat a friend online:** you get **your hits minus their hits**. Half comes from the game and half from your friend's balance (the game pays any odd dooler, so there are never fractions). Example: you land 20 hits and they land 7, so you win 13 doolers: 7 from the game and 6 from your friend.
+- **Fair play limits:**
+  - bot rewards need about a minute between wins, and pay at most 800 a day
+  - online winnings top out at 1,500 a day
+  - a result only pays out when both players' games agree on it
+  - if your friend leaves before the end, you still get the game's half
 
-Balances live on the Cloudflare relay (one record per player), not in the browser, so they can't be edited from the page.
+### Spending and balance
 
-## Folder layout
+- **Spending:** keeping an AI-built move costs **100**. Slider edits are always free.
+- **Where you see it:** your balance shows in the top-left corner on the Build and results screens, with a little bounce when it goes up. After a match, a line on the results screen tells you what you earned (only when you earned something).
+- **Tester codes:** if you've been given one, enter it in Settings for **500 doolers**. These don't count toward the leaderboard.
 
-- `index.html`, `src/` — the game (`src/game.js` is the code, `src/style.css` the styles)
-- `.github/workflows/deploy.yml` — builds and publishes to GitHub Pages automatically
-- `server/` — the online-play relay and AI move endpoint (Cloudflare Worker), deployed by the workflow
-- `src/account.js` — Google sign-in, usernames and cloud-saved moves (Firebase)
-- `firestore.rules` — database security rules to paste into Firebase
-- `desktop/` — optional Windows/Mac app wrapper
+---
 
-## Run it on your computer
+## Leaderboard
 
-Install Node.js 22 or newer, then in this folder:
+Press **Leaderboard** on the main menu to see the top 50 players:
 
-```
-npm install
-npm run dev
-```
+| Column | What it shows |
+|---|---|
+| **Player** | their username (your own row is highlighted) |
+| **Most played** | the element they've played the most matches with (bot and online matches count, Practice doesn't) |
+| **Doolers won** | the total they've won from beating the bot and friends |
 
-Open the address it prints (usually http://localhost:5173).
+Only doolers you **won** count. Tester codes and the welcome bonus never do, and spending doolers doesn't lower your score.
 
-## Publish to GitHub Pages
+---
 
-1. Create an empty repository on GitHub, for example `stickv1`.
-2. Push this folder to it:
-   ```
-   git init
-   git add .
-   git commit -m "Stick v1"
-   git branch -M main
-   git remote add origin https://github.com/YOUR-USERNAME/stickv1.git
-   git push -u origin main
-   ```
-3. In the repository, open **Settings → Pages** and set **Source** to **GitHub Actions**.
-4. Open the **Actions** tab and re-run the workflow (or push again). When it finishes, the game is live at `https://YOUR-USERNAME.github.io/stickv1/`.
+## Playing with a friend
 
-Every push builds the game. Pushes to the default branch also publish it. Pull requests are built as a check but are never published.
+1. **Play → Online.** One player presses **Host** and gets a 5-letter code.
+2. The other player types the code and presses **Join**. It works across different networks and on mobile data.
+3. You both pick your elements and fight. After the match either of you can press **Play again**. If the connection drops, the game reconnects on its own.
 
-## Online play
-
-Online games go through a small relay server that lives in `server/` and runs free on Cloudflare Workers. Because it's normal web traffic, it works on any network: different Wi-Fi, mobile data, offices, schools. GitHub Actions deploys it for you.
-
-### Set up the relay (once, free)
-
-1. Sign up at dash.cloudflare.com (free plan).
-2. Open **Workers & Pages**. If asked, pick a `workers.dev` subdomain.
-3. Copy your **Account ID** (shown on the Workers & Pages page).
-4. **My Profile → API Tokens → Create Token →** template **Edit Cloudflare Workers** → create and copy the token.
-5. In this GitHub repo: **Settings → Secrets and variables → Actions**, add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
-6. Push (or re-run the workflow). The workflow deploys the relay, then builds the game with the relay's address baked in.
-
-Rooms hold exactly two players. Players stay connected across matches (either can press **Play again**), and a dropped link re-joins automatically. Two players fit easily in Cloudflare's free limits; if a daily limit were ever hit, the relay simply refuses new messages until midnight UTC, never a bill.
-
-Without the Cloudflare secrets the game falls back to direct peer-to-peer links (WebRTC through the free PeerJS service), which work on most home networks but can be blocked elsewhere. For that fallback you can also add a TURN relay with the `TURN_URL`, `TURN_USERNAME` and `TURN_CREDENTIAL` secrets, or enter one under **Server settings** in the game.
-
-To run the relay locally: `cd server && npm install && npm run dev`.
-
-## Desktop app (optional)
-
-```
-npm install && npm run build:single
-cd desktop
-npm install
-npm run dist:win    # on Windows
-npm run dist:mac    # on a Mac
-```
+---
 
 ## Controls
 
-- Keyboard: A/D move, Space or W jump (hold for higher, tap again to double jump), S drop, Shift or H dodge (a quick roll you can't be hit during; hold a direction to pick which way). J K L I for moves 1–4, O for the ultimate. Attacks aim automatically, or switch to mouse aim on the menu.
-- Mouse: Controls offers a gaming-mouse layout (left, right, two side buttons, left + right for the ultimate) and a normal-mouse layout (left, right, double left, double right, left + right).
-- PlayStation or Xbox controller: left stick moves, right stick aims, A/✕ jumps, RT/R2 or LT/L2 dodges, X/□ Y/△ B/○ RB/R1 for moves, LB/L1 for the ultimate. Every button can be changed under Controls.
+Every key and button can be changed under **Controls**.
+
+| Action | Keyboard | Controller (PlayStation / Xbox) |
+|---|---|---|
+| Move | A / D | left stick |
+| Jump | Space or W | ✕ / A |
+| Drop / fast fall | S | d-pad down |
+| Moves 1–4 | J · K · L · I | □ / X · △ / Y · ○ / B · R1 / RB |
+| Ultimate | O | L1 / LB |
+| Dodge | Shift or H | R2 / RT or L2 / LT |
+
+**Mouse layouts** (in Controls):
+
+- **Gaming mouse:** left, right, two side buttons, and left + right for the ultimate.
+- **Normal mouse:** left, right, double left, double right, and left + right.
+
+---
+
+*Running your own copy of the game? The setup notes are in [docs/SETUP.md](docs/SETUP.md).*

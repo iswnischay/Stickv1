@@ -33,6 +33,14 @@ new_sqlite_classes = ["Quota"]
 tag = "v3"
 new_sqlite_classes = ["Wallet", "Match"]
 
+[[durable_objects.bindings]]
+name = "BOARD"
+class_name = "Board"
+
+[[migrations]]
+tag = "v4"
+new_sqlite_classes = ["Board"]
+
 [vars]
 FIREBASE_PROJECT_ID = "stickv1-36a11"
 # GEMINI_API_KEY is a secret, set by the GitHub workflow from the GEMINI_API_KEY repository secret.
