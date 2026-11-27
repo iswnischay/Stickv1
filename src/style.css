@@ -384,3 +384,10 @@ body.has-screen .topbar { visibility: hidden; }
 .home-cards > *:nth-child(2) { animation-delay: 0.07s; } .home-cards > *:nth-child(3) { animation-delay: 0.14s; }
 @keyframes card-in { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .logo-mark, .logo-mark .vs, .home-cards > *, .cta.glow, .make-btn, .pulse { animation: none; } }
+
+/* the title is hand-lettered: Rock Salt for "STICK", the versus v and the 1 */
+.logo-mark, .brand { font-family: "Rock Salt", var(--impact); text-transform: uppercase; letter-spacing: 0; }
+.logo-mark { font-size: clamp(2.6rem, 9vw, 5.4rem); line-height: 1.25; padding: 0.1em 0; }
+.brand { font-size: 1.25rem; line-height: 1.4; }
+.logo-mark .vs, .brand .vs { font-family: "Rock Salt", var(--display); font-style: normal; font-weight: 400; font-size: 0.62em; margin: 0 0.32em 0 0.6em; transform: rotate(-12deg) translateY(0.05em); }
+.logo-mark .one, .brand .one { font-family: "Rock Salt", var(--impact); }

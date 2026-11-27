@@ -87,6 +87,6 @@ npm run dist:mac    # on a Mac
 
 ## Controls
 
-- Keyboard: A/D move, Space or W jump (hold for higher, tap again to double jump), S drop. J K L I for moves 1–4, O for the ultimate. Attacks aim automatically, or switch to mouse aim on the menu.
+- Keyboard: A/D move, Space or W jump (hold for higher, tap again to double jump), S drop, Shift or H dodge (a quick roll you can't be hit during; hold a direction to pick which way). J K L I for moves 1–4, O for the ultimate. Attacks aim automatically, or switch to mouse aim on the menu.
 - Mouse: Controls offers a gaming-mouse layout (left, right, two side buttons, left + right for the ultimate) and a normal-mouse layout (left, right, double left, double right, left + right).
-- PlayStation or Xbox controller: left stick moves, right stick aims, A/✕ jumps, X/□ Y/△ B/○ RB/R1 for moves, LB/L1 for the ultimate. Every button can be changed under Controls.
+- PlayStation or Xbox controller: left stick moves, right stick aims, A/✕ jumps, RT/R2 or LT/L2 dodges, X/□ Y/△ B/○ RB/R1 for moves, LB/L1 for the ultimate. Every button can be changed under Controls.

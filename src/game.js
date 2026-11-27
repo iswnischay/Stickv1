@@ -89,13 +89,13 @@ const DEFAULT_ULT_DESC = { light: 'A pillar of sunlight crashes down on the enem
 for (const el of EL_IDS) DEFAULTS[el].forEach((m, i) => { m.element = el; if (i === 4) m.description = DEFAULT_ULT_DESC[el]; });
 
 /* ---------- key bindings ---------- */
-const ACTIONS = [['left', 'Move left'], ['right', 'Move right'], ['jump', 'Jump'], ['drop', 'Drop / fast fall'], ['m1', 'Move 1'], ['m2', 'Move 2'], ['m3', 'Move 3'], ['m4', 'Move 4'], ['m5', 'Ultimate']];
+const ACTIONS = [['left', 'Move left'], ['right', 'Move right'], ['jump', 'Jump'], ['drop', 'Drop / fast fall'], ['m1', 'Move 1'], ['m2', 'Move 2'], ['m3', 'Move 3'], ['m4', 'Move 4'], ['m5', 'Ultimate'], ['dodge', 'Dodge']];
 const DEFAULT_BINDS = {
-  soloAuto: { left: ['KeyA'], right: ['KeyD'], jump: ['Space', 'KeyW'], drop: ['KeyS'], m1: ['Mouse0', 'KeyJ'], m2: ['Mouse2', 'KeyK'], m3: ['Mouse3', 'KeyL'], m4: ['Mouse4', 'KeyI'], m5: ['MouseLR', 'KeyO'] },
-  solo: { left: ['KeyA'], right: ['KeyD'], jump: ['Space', 'KeyW'], drop: ['KeyS'], m1: ['Mouse0', 'Digit1'], m2: ['Mouse2', 'Digit2'], m3: ['KeyQ', 'Digit3'], m4: ['KeyE', 'Digit4'], m5: ['ShiftLeft', 'Digit5'] },
-  duo1: { left: ['KeyA'], right: ['KeyD'], jump: ['KeyW'], drop: ['KeyS'], m1: ['KeyC'], m2: ['KeyV'], m3: ['KeyB'], m4: ['KeyF'], m5: ['KeyG'] },
-  pad: { jump: [0], drop: [13], m1: [2], m2: [3], m3: [1], m4: [5], m5: [4] },
-  duo2: { left: ['ArrowLeft'], right: ['ArrowRight'], jump: ['ArrowUp'], drop: ['ArrowDown'], m1: ['Numpad1', 'KeyJ'], m2: ['Numpad2', 'KeyK'], m3: ['Numpad3', 'KeyL'], m4: ['Numpad4', 'KeyI'], m5: ['Numpad5', 'KeyO'] }
+  soloAuto: { left: ['KeyA'], right: ['KeyD'], jump: ['Space', 'KeyW'], drop: ['KeyS'], m1: ['Mouse0', 'KeyJ'], m2: ['Mouse2', 'KeyK'], m3: ['Mouse3', 'KeyL'], m4: ['Mouse4', 'KeyI'], m5: ['MouseLR', 'KeyO'], dodge: ['ShiftLeft', 'KeyH'] },
+  solo: { left: ['KeyA'], right: ['KeyD'], jump: ['Space', 'KeyW'], drop: ['KeyS'], m1: ['Mouse0', 'Digit1'], m2: ['Mouse2', 'Digit2'], m3: ['KeyQ', 'Digit3'], m4: ['KeyE', 'Digit4'], m5: ['ShiftLeft', 'Digit5'], dodge: ['KeyR', 'Digit6'] },
+  duo1: { left: ['KeyA'], right: ['KeyD'], jump: ['KeyW'], drop: ['KeyS'], m1: ['KeyC'], m2: ['KeyV'], m3: ['KeyB'], m4: ['KeyF'], m5: ['KeyG'], dodge: ['KeyQ'] },
+  pad: { jump: [0], drop: [13], m1: [2], m2: [3], m3: [1], m4: [5], m5: [4], dodge: [7, 6] },
+  duo2: { left: ['ArrowLeft'], right: ['ArrowRight'], jump: ['ArrowUp'], drop: ['ArrowDown'], m1: ['Numpad1', 'KeyJ'], m2: ['Numpad2', 'KeyK'], m3: ['Numpad3', 'KeyL'], m4: ['Numpad4', 'KeyI'], m5: ['Numpad5', 'KeyO'], dodge: ['ShiftRight', 'Numpad0'] }
 };
 const deep = o => JSON.parse(JSON.stringify(o));
 let binds = deep(DEFAULT_BINDS);
@@ -270,14 +270,14 @@ function makeFighter(slot, element) {
     x: 0, y: GROUND, vx: 0, vy: 0, onGround: true, jumps: 0, face: 1, dropT: 0, lastAx: 0, coyote: 0, jumpBuf: 0, jumpCut: true,
     aimX: 0, aimY: 0, aimAng: 0, aimMode: 'auto', queued: null,
     ult: 0, mana: MANA_MAX, cds: [0, 0, 0, 0, 0], fail: [0, 0, 0, 0, 0], stun: 0, blind: 0, slow: 0, invuln: 0,
-    shield: null, dash: null, castAnim: 0, runPhase: 0,
+    shield: null, dash: null, castAnim: 0, runPhase: 0, dodgeT: 0, dodgeCd: 0, dodgeDir: 1,
     score: 0, roundScore: [0, 0], heads: 0, bodies: 0, bonus: 0, stats: [], ai: { t: 0, jumpCd: 0, range: 340, ox: 0, oy: 0, head: false } };
 }
 function resetFighter(f, moves) {
   f.moves = moves; f.scheme = schemeFor(f.slot); f.isBot = opts.mode === 'bot' && f.slot === 1;
   f.x = f.slot === 0 ? 240 : W - 240; f.y = GROUND; f.vx = 0; f.vy = 0; f.onGround = true; f.jumps = 0; f.coyote = 0; f.jumpBuf = 0;
   f.face = f.slot === 0 ? 1 : -1; f.mana = MANA_MAX; f.ult = 0; f.cds = [0, 0, 0, 0, 0]; f.fail = [0, 0, 0, 0, 0]; f.queued = null;
-  f.stun = 0; f.blind = 0; f.slow = 0; f.invuln = 0; f.shield = null; f.dash = null; f.castAnim = 0;
+  f.stun = 0; f.blind = 0; f.slow = 0; f.invuln = 0; f.shield = null; f.dash = null; f.castAnim = 0; f.dodgeT = 0; f.dodgeCd = 0; f.dodged = false;
   f.stats = moves.map(() => ({ casts: 0, hits: 0, pts: 0 }));
 }
 const opp = f => fighters[1 - f.slot];
@@ -367,7 +367,7 @@ function readPad(index) {
   const pb = binds.pad;
   const out = { ax: Math.abs(p.axes[0] || 0) > 0.3 ? Math.sign(p.axes[0]) : (btn(14) ? -1 : btn(15) ? 1 : 0),
     jump: any(pb.jump, edge), jumpHeld: any(pb.jump, btn), drop: (p.axes[1] || 0) > 0.6 || any(pb.drop, btn),
-    moves: ['m1', 'm2', 'm3', 'm4', 'm5'].map(a => any(pb[a], edge)), pause: edge(9),
+    moves: ['m1', 'm2', 'm3', 'm4', 'm5'].map(a => any(pb[a], edge)), pause: edge(9), dodge: any(pb.dodge, edge),
     aim: Math.hypot(p.axes[2] || 0, p.axes[3] || 0) > 0.45 ? { x: p.axes[2], y: p.axes[3] } : null };
   padPrev[p.index] = p.buttons.map(b => b.pressed);
   return out;
@@ -384,11 +384,12 @@ function pollPadCapture() {
 }
 function padIndexFor(f) { return opts.mode === 'pvp' ? f.slot : 0; }
 function readLocalInput(sc, padIndex) {
-  const r = { ax: 0, wantJump: false, jumpHeld: false, drop: false, casts: [], pad: null, pause: false };
+  const r = { ax: 0, wantJump: false, jumpHeld: false, drop: false, casts: [], pad: null, pause: false, dodge: false };
   if (sc) {
     r.ax = (actDown(sc, 'left') ? -1 : 0) + (actDown(sc, 'right') ? 1 : 0);
     r.wantJump = actPressed(sc, 'jump'); r.jumpHeld = actDown(sc, 'jump'); r.drop = actDown(sc, 'drop');
     for (let i = 0; i < 5; i++) if (actPressed(sc, 'm' + (i + 1))) r.casts.push(i);
+    if (binds[sc].dodge && actPressed(sc, 'dodge')) r.dodge = true;
   }
   const pad = readPad(padIndex);
   if (pad) {
@@ -396,7 +397,7 @@ function readLocalInput(sc, padIndex) {
     if (!r.ax) r.ax = pad.ax;
     r.wantJump = r.wantJump || pad.jump; r.jumpHeld = r.jumpHeld || pad.jumpHeld; r.drop = r.drop || pad.drop;
     pad.moves.forEach((p, i) => { if (p && !r.casts.includes(i)) r.casts.push(i); });
-    r.pause = pad.pause;
+    r.pause = pad.pause; if (pad.dodge) r.dodge = true;
   }
   return r;
 }
@@ -443,6 +444,7 @@ function applyEffects(tgt, m, srcX) {
 }
 
 function registerHit(att, tgt, idx, isHead, m, srcX) {
+  if (tgt && tgt !== att && tgt.invuln > 0 && tgt.dodgeT > 0 && !tgt.dodged) { tgt.dodged = true; addText(tgt.x, tgt.y - 112, 'dodged!', elCol(tgt.element), 24); }
   if (!tgt || tgt === att || tgt.invuln > 0) return false;
   applyEffects(tgt, m, srcX);
   if (m.stats.damage <= 0) return true;
@@ -493,7 +495,7 @@ function tryCast(f, i) {
   else { f.mana -= m.mana_cost; f.cds[i] = m.cooldown; }
   f.stats[i].casts++; f.castType = m.type; f.castUlt = !!m.ult; f.castAnim = f.castDur = CAST_DUR[m.type] || 0.28;
   const st = m.stats, o = opp(f), ang = f.aimAng, cy = chestY(f);
-  if (effOf(m, 'blind') && o && o !== f) blindTarget(o, m);
+  if (effOf(m, 'blind') && o && o !== f) { if (o.dodgeT > 0) { if (!o.dodged) { o.dodged = true; addText(o.x, o.y - 112, 'dodged!', elCol(o.element), 24); } } else blindTarget(o, m); }
   const ca = Math.cos(ang), sa = Math.sin(ang);
   switch (m.type) {
     case 'projectile': {
@@ -636,7 +638,9 @@ function botThink(f, dt) {
     choices.sort((a, b) => b[1] - a[1]);
     if (choices.length && choices[0][1] > 1.6) cast = choices[0][0];
   }
-  return { ax, wantJump, jumpHeld: true, drop, cast };
+  const dodgeChance = { easy: 0.6, normal: 1.6, hard: 3.2 }[opts.level] || 1.6;
+  const dodge = threat && f.dodgeCd <= 0 && Math.random() < dt * dodgeChance;
+  return { ax, wantJump, jumpHeld: true, drop, cast, dodge };
 }
 
 /* ---------- update ---------- */
@@ -660,24 +664,39 @@ function updateAim(f, pad) {
   f.aimAng = Math.atan2(f.aimY - cy, f.aimX - f.x);
 }
 
+// Dodge: a quick roll with a moment of invulnerability. Everyone has it, it costs nothing, it just has a short cooldown.
+// Roll through an attack at the right moment and it passes straight through you.
+const DODGE_TIME = 0.3, DODGE_IFRAMES = 0.24, DODGE_CD = 1.1, DODGE_SPEED = 820;
+function tryDodge(f, ax) {
+  if (f.dodgeCd > 0 || f.dodgeT > 0 || f.stun > 0 || f.dash) return false;
+  f.dodgeDir = ax ? Math.sign(ax) : -f.face; // no direction held: roll away from the opponent
+  f.dodgeT = DODGE_TIME; f.dodgeCd = DODGE_CD; f.dodged = false;
+  f.invuln = Math.max(f.invuln, DODGE_IFRAMES);
+  dust(f.x, f.y, 4, 1.2); nudge(f, 'crouch', 180);
+  return true;
+}
 function controlFighter(f, dt) {
-  let ax = 0, wantJump = false, jumpHeld = false, drop = false, casts = [], pad = null;
+  let ax = 0, wantJump = false, jumpHeld = false, drop = false, casts = [], pad = null, dodge = false;
   if (f.dummy) { /* practice dummy: stands still */ }
-  else if (f.isBot) { const b = botThink(f, dt); ({ ax, wantJump, jumpHeld, drop } = b); if (b.cast >= 0) casts.push(b.cast); }
-  else if (f.remote) ({ ax, wantJump, jumpHeld, drop, casts } = netRemoteInput(f));
+  else if (f.isBot) { const b = botThink(f, dt); ({ ax, wantJump, jumpHeld, drop, dodge } = b); if (b.cast >= 0) casts.push(b.cast); }
+  else if (f.remote) ({ ax, wantJump, jumpHeld, drop, casts, dodge } = netRemoteInput(f));
   else {
     const r = readLocalInput(f.scheme, padIndexFor(f));
-    ({ ax, wantJump, jumpHeld, drop, casts, pad } = r);
+    ({ ax, wantJump, jumpHeld, drop, casts, pad, dodge } = r);
     if (r.pause && opts.mode !== 'online') togglePause();
   }
   updateAim(f, pad);
   f.lastAx = ax;
+  if (dodge) tryDodge(f, ax);
+  if (f.dodgeT > 0) { casts = []; f.dodgeT = Math.max(0, f.dodgeT - dt); if (f.dodgeT <= 0) f.vx *= 0.35; }
+  f.dodgeCd = Math.max(0, f.dodgeCd - dt);
   if (wantJump) f.jumpBuf = JUMP_BUFFER;
   if (f.stun > 0) { ax = 0; casts = []; }
   if (!f.dash) {
     if (f.stun > 0) f.vx *= Math.max(0, 1 - dt * 3);
     else { const sp = MOVE * (f.slow > 0 ? 0.5 : 1); f.vx += (ax * sp - f.vx) * Math.min(1, dt * (f.onGround ? 18 : 10)); }
   }
+  if (f.dodgeT > 0) { const k = f.dodgeT / DODGE_TIME; f.vx = f.dodgeDir * DODGE_SPEED * (0.35 + 0.65 * k); if (!f.onGround) f.vy = Math.min(f.vy, 120); }
   if (f.onGround) { f.coyote = COYOTE; f.jumps = 0; } else f.coyote = Math.max(0, f.coyote - dt);
   if (f.jumpBuf > 0 && f.stun <= 0) {
     const ground = f.coyote > 0 && f.jumps === 0;
@@ -1405,9 +1424,10 @@ function castPose(f, P) {
 function poseTargets(f) {
   const moving = Math.abs(f.vx) > 40 && f.onGround, ph = f.runPhase, sp = clamp(Math.abs(f.vx) / MOVE, 0, 1.2);
   const P = { lean: 0, crouch: 0, hipA: [0.2, -0.2], knee: [-0.15, -0.15], sh: [0.5, -0.3], el: [1.6, 0.6], headTilt: 0 };
-  if (f.dash) { P.lean = 0.6; P.hipA = [0.9, -0.9]; P.knee = [-1.4, -0.3]; P.sh = [-1.4, -1.7]; P.el = [0.3, 0.2]; P.headTilt = -0.1; }
+  if (f.dodgeT > 0 && f.onGround) { P.hipA = [1.7, 1.5]; P.knee = [-2.3, -2.2]; P.sh = [1.2, 1.0]; P.el = [1.8, 1.8]; P.lean = 0.5; P.crouch = 14; }
+  else if (f.dash) { P.lean = 0.6; P.hipA = [0.9, -0.9]; P.knee = [-1.4, -0.3]; P.sh = [-1.4, -1.7]; P.el = [0.3, 0.2]; P.headTilt = -0.1; }
   else if (!f.onGround) {
-    if (f.flip > 0) { P.hipA = [1.7, 1.5]; P.knee = [-2.3, -2.2]; P.sh = [1.2, 1.0]; P.el = [1.8, 1.8]; P.lean = 0.3; } // tucked flip
+    if (f.flip > 0 || f.dodgeT > 0) { P.hipA = [1.7, 1.5]; P.knee = [-2.3, -2.2]; P.sh = [1.2, 1.0]; P.el = [1.8, 1.8]; P.lean = 0.3; } // tucked flip
     else if (f.vy < 0) { P.hipA = [1.1, 0.1]; P.knee = [-1.8, -0.9]; P.sh = [2.5, 2.8]; P.el = [0.5, 0.35]; P.lean = 0.12; P.headTilt = 0.12; }
     else { const fl = Math.sin(clock * 14) * 0.15; P.hipA = [0.45, -0.3]; P.knee = [-0.7, -0.3]; P.sh = [1.7 + fl, 2.1 - fl]; P.el = [0.5, 0.6]; P.lean = -0.06; P.headTilt = -0.05; }
   } else if (moving) {
@@ -1571,13 +1591,15 @@ function drawFighter(f) {
   const shakeX = f.stun > 0 ? (Math.random() - 0.5) * 4 : 0;
   drawShadow(f);
   if (isMine(f) && fighters.length === 2) drawMineGlow(f);
+  if (f.dodgeT > 0) { for (let g = 1; g <= 3; g++) { ctx.save(); ctx.globalAlpha = 0.22 / g; ctx.translate(-(f.vx || 0) * 0.018 * g, 0); drawBody(f, P, fs, 0, elCol(f.element), true); ctx.restore(); } }
   if (f.dash) { for (let g = 1; g <= 4; g++) { ctx.save(); ctx.globalAlpha = 0.2 / g; ctx.translate(-(f.vx || 0) * 0.012 * g, -(f.vy || 0) * 0.008 * g); drawBody(f, P, fs, shakeX, col, true); ctx.restore(); } }
   ctx.save();
   // squash and stretch around the feet, keeping the volume the same
   ctx.translate(f.x, f.y); ctx.scale(1 / Math.sqrt(f.sq), f.sq); ctx.translate(-f.x, -f.y);
+  if (f.dodgeT > 0) { f.rollT = (f.rollT || 0) + frameDt; const k = Math.min(1, f.rollT / DODGE_TIME), dir = Math.sign(f.vx || f.dodgeDir || 1), cy = f.y - 26; ctx.translate(f.x, cy); ctx.rotate(k * Math.PI * 2 * dir); ctx.translate(-f.x, -cy); } else f.rollT = 0;
   if (f.flip > 0) { const k = 1 - f.flip / 0.42, e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2, cy = f.y - 40; ctx.translate(f.x, cy); ctx.rotate(e * Math.PI * 2 * (Math.sign(f.faceS) || 1)); ctx.translate(-f.x, -cy); }
   drawTrails(f);
-  if (f.invuln > 0 && !f.dash && Math.floor(clock * 30) % 2) ctx.globalAlpha = 0.45;
+  if (f.invuln > 0 && !f.dash && !(f.dodgeT > 0) && Math.floor(clock * 30) % 2) ctx.globalAlpha = 0.45;
   drawBody(f, P, fs, shakeX, col, false);
   ctx.restore();
   if (f.orbit) drawOrbit(f);
@@ -1683,6 +1705,13 @@ function drawHUD() {
     ctx.strokeStyle = C.ink; ctx.lineWidth = 2; roundRect(bx, by, bw, 14, 7); ctx.stroke();
     ctx.fillStyle = C.soft; ctx.font = '600 13px "Bricolage Grotesque", system-ui, sans-serif';
     ctx.fillText(`${Math.floor(f.mana)} mana`, left ? bx + bw + 10 : bx - 10, by + 12);
+    if (isMine(f) || opts.mode === 'pvp') {
+      const dk = 1 - clamp((f.dodgeCd || 0) / DODGE_CD, 0, 1), dw = 64, dx0 = left ? bx : bx + bw - dw, dy0 = by + 22;
+      ctx.fillStyle = C.paper2; roundRect(dx0, dy0, dw, 8, 4); ctx.fill();
+      ctx.fillStyle = dk >= 1 ? col : C.soft; roundRect(dx0, dy0, Math.max(8, dw * dk), 8, 4); ctx.fill();
+      ctx.fillStyle = dk >= 1 ? C.ink : C.soft; ctx.font = '600 11px "Bricolage Grotesque", system-ui, sans-serif'; ctx.textAlign = left ? 'left' : 'right';
+      ctx.fillText(dk >= 1 ? 'dodge ready' : 'dodge', left ? dx0 + dw + 8 : dx0 - 8, dy0 + 8);
+    }
     if (f.shownScore !== f.score) { f.scorePop = 1; f.shownScore = f.score; }
     f.scorePop = Math.max(0, (f.scorePop || 0) - frameDt * 3);
     const pop = 1 + Math.sin(f.scorePop * Math.PI) * 0.35 * f.scorePop;
@@ -2171,7 +2200,7 @@ function startOnlineRound() {
   startRound();
   const f = fighters[1]; f.remote = true; f.isBot = false;
   const d = (oppPeer() || {}).data || {}, inp = d.in || {};
-  f.rj = inp.j || 0; f.rm = (inp.m || [0, 0, 0, 0, 0]).slice();
+  f.rj = inp.j || 0; f.rdg = inp.dg || 0; f.rm = (inp.m || [0, 0, 0, 0, 0]).slice();
 }
 function netRemoteInput(f) {
   const o = oppPeer(); const d = (o && o.data && o.data.in) || {};
@@ -2181,12 +2210,13 @@ function netRemoteInput(f) {
   // presses are counters: a higher number means a new press. If a counter ever goes backwards, follow it instead of waiting.
   for (let k = 0; k < 5; k++) { const v = Number(m[k]) || 0; if (v > f.rm[k]) casts.push(k); f.rm[k] = v; }
   const j = Number(d.j) || 0, wantJump = j > (f.rj || 0); f.rj = j;
+  const dg = Number(d.dg) || 0, dodge = dg > (f.rdg || 0); f.rdg = dg;
   f.remoteAim = Array.isArray(d.s) ? { kind: 'stick', x: Number(d.s[0]) || 0, y: Number(d.s[1]) || 0 } : Array.isArray(d.a) ? { kind: 'mouse', x: Number(d.a[0]) || 0, y: Number(d.a[1]) || 0 } : null;
-  return { ax: clamp(Number(d.ax) || 0, -1, 1), wantJump, jumpHeld: !!d.jh, drop: !!d.dr, casts };
+  return { ax: clamp(Number(d.ax) || 0, -1, 1), wantJump, jumpHeld: !!d.jh, drop: !!d.dr, casts, dodge };
 }
 function buildSnap() {
   const F = fighters.map(f => [Math.round(f.x), Math.round(f.y), Math.round(f.vx), f.face, r1(f.aimAng), Math.round(f.mana), Math.round(f.ult), f.cds.map(r1),
-    (f.onGround ? 1 : 0) | (f.stun > 0 ? 2 : 0) | (f.blind > 0 ? 4 : 0) | (f.slow > 0 ? 8 : 0) | (f.invuln > 0 ? 16 : 0) | (f.dash ? 32 : 0),
+    (f.onGround ? 1 : 0) | (f.stun > 0 ? 2 : 0) | (f.blind > 0 ? 4 : 0) | (f.slow > 0 ? 8 : 0) | (f.invuln > 0 ? 16 : 0) | (f.dash ? 32 : 0) | (f.dodgeT > 0 ? 64 : 0),
     f.shield ? [Math.round(f.shield.r), r1(f.shield.t), f.shield.reflect ? 1 : 0] : 0, r1(f.castAnim), r1(f.runPhase % 100),
     f.score, f.roundScore[0], f.roundScore[1], f.heads, f.bodies, f.bonus, EL_INDEX[f.element], f.stats.map(s => [s.casts, s.hits, s.pts]), Math.round(f.vy), f.orbit ? [f.orbit.n, Math.round(f.orbit.r), r1(f.orbit.ang), r1(f.orbit.or)] : 0, TYPE_IDS.indexOf(f.castType || 'projectile') + (f.castUlt ? 100 : 0), f.jumps, f.hitDir || 0, f.blind > 0 ? EL_INDEX[f.blindEl || 'light'] : -1]);
   const oin = ((oppPeer() || {}).data || {}).in || {};
@@ -2249,7 +2279,7 @@ function applyFighters(F) {
     const predicted = NET.role === 'guest' && i === NET.side && state === 'fight';
     f.svx = Number(a[2]) || 0; if (!predicted) f.vx = f.svx; f.face = a[3] < 0 ? -1 : 1; f.aimAng = Number(a[4]) || 0; f.mana = Number(a[5]) || 0; f.ult = Number(a[6]) || 0;
     if (Array.isArray(a[7])) { f.cds = a[7].map(Number); const lc = f.localCd; if (lc && performance.now() < lc.until && (f.cds[lc.i] || 0) < 0.05 && lc.cd) f.cds[lc.i] = lc.cd; }
-    const fl = a[8] | 0; f.sground = !!(fl & 1); if (!predicted) f.onGround = f.sground; f.stun = fl & 2 ? 0.1 : 0; f.blind = fl & 4 ? 0.1 : 0; f.slow = fl & 8 ? 0.1 : 0; f.invuln = fl & 16 ? 0.1 : 0; f.dash = fl & 32 ? { vx: f.vx, vy: 0 } : null;
+    const fl = a[8] | 0; const wasRoll = f.dodgeT > 0; f.dodgeT = fl & 64 ? 0.15 : 0; if (f.dodgeT && !wasRoll) f.rollT = 0; f.sground = !!(fl & 1); if (!predicted) f.onGround = f.sground; f.stun = fl & 2 ? 0.1 : 0; f.blind = fl & 4 ? 0.1 : 0; f.slow = fl & 8 ? 0.1 : 0; f.invuln = fl & 16 ? 0.1 : 0; f.dash = fl & 32 ? { vx: f.vx, vy: 0 } : null;
     f.shield = Array.isArray(a[9]) ? { r: Number(a[9][0]), t: Number(a[9][1]), reflect: !!a[9][2] } : null;
     const nowT = performance.now();
     if (!(predicted && f.localCastUntil > nowT)) f.castAnim = Number(a[10]) || 0;
@@ -2299,7 +2329,7 @@ function guestUpdate(dt) {
   for (const f of fighters) if (f.orbit) f.orbit.ang += dt * 4;
   for (const r of rings) r.life -= dt;
   rings = rings.filter(r => r.life > 0);
-  const me = fighters[NET.side]; if (me) for (let i = 0; i < 5; i++) me.fail[i] = Math.max(0, me.fail[i] - dt);
+  const me = fighters[NET.side]; if (me) { for (let i = 0; i < 5; i++) me.fail[i] = Math.max(0, me.fail[i] - dt); me.dodgeCd = Math.max(0, (me.dodgeCd || 0) - dt); }
 }
 // Show the opponent ~70 ms in the past, blending between the two snapshots around that moment.
 // Snapshots arrive unevenly over the internet; this turns them into steady motion instead of jumps.
@@ -2325,7 +2355,7 @@ function interpolateOpp(f, dt) {
 function predictMine(f, dt) {
   const r = NET.lastIn, live = state === 'fight' && r;
   if (f.tx === undefined) return;
-  if (!live || f.dash || f.stun > 0) { f.x += (f.tx - f.x) * Math.min(1, dt * 18); f.y += (f.ty - f.y) * Math.min(1, dt * 18); f.pvx = f.svx || 0; f.pvy = f.svy || 0; f.pjumps = f.jumps; f.pground = f.sground; return; }
+  if (!live || f.dash || f.stun > 0 || f.dodgeT > 0) { f.x += (f.tx - f.x) * Math.min(1, dt * 18); f.y += (f.ty - f.y) * Math.min(1, dt * 18); f.pvx = f.svx || 0; f.pvy = f.svy || 0; f.pjumps = f.jumps; f.pground = f.sground; return; }
   if (f.pvx === undefined) { f.pvx = f.svx || 0; f.pvy = f.svy || 0; f.pjumps = 0; f.pground = f.sground !== false; }
   const sp = MOVE * (f.slow > 0 ? 0.5 : 1); let ground = f.pground;
   f.pvx += (r.ax * sp - f.pvx) * Math.min(1, dt * (ground ? 18 : 10));
@@ -2364,7 +2394,8 @@ function guestSendInput() {
     me.localCastUntil = now + 350; me.localCd = { i, cd: m.ult ? 0 : m.cooldown, until: now + (NET.rtt || 120) + 200 };
     burstParticles(me.x + me.face * 16, chestY(me), me.element, m.ult ? 16 : 6, 160);
   });
-  const inp = { ax: r.ax, jh: r.jumpHeld ? 1 : 0, dr: r.drop ? 1 : 0, j: NET.inC.j, m: NET.inC.m.slice(), lt: Math.round((NET.rtt || 0) / 20) * 20 };
+  if (r.dodge) { NET.inC.d = (NET.inC.d || 0) + 1; const me0 = fighters[NET.side]; if (me0 && !(me0.dodgeCd > 0)) me0.dodgeCd = DODGE_CD; }
+  const inp = { ax: r.ax, jh: r.jumpHeld ? 1 : 0, dr: r.drop ? 1 : 0, dg: NET.inC.d || 0, j: NET.inC.j, m: NET.inC.m.slice(), lt: Math.round((NET.rtt || 0) / 20) * 20 };
   if (r.pad && r.pad.aim) inp.s = [Math.round(r.pad.aim.x * 100), Math.round(r.pad.aim.y * 100)];
   else if (opts.aim === 'mouse') inp.a = [Math.round(mouse.x), Math.round(mouse.y)];
   const key = JSON.stringify(inp);
@@ -2659,7 +2690,7 @@ function bindSummary(sc) {
   const b = binds[sc], k = a => b[a].map(c => `<kbd>${esc(keyName(c))}</kbd>`).join(' or ');
   return `${k('left')} ${k('right')} move, ${k('jump')} jump (tap again in the air to double jump, hold for higher), ${k('drop')} drop or fast fall. Moves: ${['m1', 'm2', 'm3', 'm4'].map(k).join(', ')}. Ultimate: ${k('m5')}.`;
 }
-function padSummary() { const b = binds.pad, k = a => (b[a] || []).map(i => `<kbd>${esc(padName(i))}</kbd>`).join(' or ') || 'not set'; return `${k('jump')} jump, ${k('m1')}, ${k('m2')}, ${k('m3')}, ${k('m4')} moves, ${k('m5')} ultimate`; }
+function padSummary() { const b = binds.pad, k = a => (b[a] || []).map(i => `<kbd>${esc(padName(i))}</kbd>`).join(' or ') || 'not set'; return `${k('jump')} jump, ${k('dodge')} dodge, ${k('m1')}, ${k('m2')}, ${k('m3')}, ${k('m4')} moves, ${k('m5')} ultimate`; }
 
 function showSettings() {
   state = 'settings';
@@ -3116,7 +3147,7 @@ screenEl.addEventListener('click', e => {
 });
 
 function updateLegend() {
-  const s = sc => { const b = binds[sc], k = a => `<kbd>${esc(keyShort(b[a][0]))}</kbd>`; return `${k('left')}${k('right')} move · ${k('jump')} jump · ${k('drop')} drop · ${['m1', 'm2', 'm3', 'm4'].map(k).join('')} moves · ${k('m5')} ultimate`; };
+  const s = sc => { const b = binds[sc], k = a => `<kbd>${esc(keyShort(b[a][0]))}</kbd>`; return `${k('left')}${k('right')} move · ${k('jump')} jump · ${k('drop')} drop · ${['m1', 'm2', 'm3', 'm4'].map(k).join('')} moves · ${b.dodge ? k('dodge') + ' dodge · ' : ''}${k('m5')} ultimate`; };
   legendEl.innerHTML = opts.mode !== 'pvp'
     ? `You: ${opts.aim === 'mouse' ? 'aim with the mouse · ' : ''}${s(soloScheme())} &nbsp;|&nbsp; controller works too &nbsp;|&nbsp; <kbd>Esc</kbd> pause`
     : `Player 1: ${s('duo1')} &nbsp;|&nbsp; Player 2: ${s('duo2')} &nbsp;|&nbsp; <kbd>Esc</kbd> pause`;
