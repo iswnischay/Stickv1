@@ -1629,11 +1629,12 @@ function drawMineGlow(f) {
   ctx.restore();
 }
 function drawFighter(f) {
+  if (state === 'ko' && f.koHide) return;
   const col = elCol(f.element);
   if (f.faceS === undefined) f.faceS = f.face;
   f.faceS += (f.face - f.faceS) * (1 - Math.exp(-frameDt * 18));
   animEvents(f);
-  const P = smoothPose(f), fs = Math.abs(f.faceS) < 0.15 ? Math.sign(f.faceS || 1) * 0.15 : f.faceS;
+  const P = state === 'ko' && f.koFreeze && f.pose ? f.pose : smoothPose(f), fs = Math.abs(f.faceS) < 0.15 ? Math.sign(f.faceS || 1) * 0.15 : f.faceS;
   const shakeX = f.stun > 0 ? (Math.random() - 0.5) * 4 : 0;
   drawShadow(f);
   if (isMine(f) && fighters.length === 2) drawMineGlow(f);
@@ -1643,6 +1644,7 @@ function drawFighter(f) {
   // squash and stretch around the feet, keeping the volume the same
   ctx.translate(f.x, f.y); ctx.scale(1 / Math.sqrt(f.sq), f.sq); ctx.translate(-f.x, -f.y);
   if (f.dodgeT > 0) { f.rollT = (f.rollT || 0) + frameDt; const k = Math.min(1, f.rollT / DODGE_TIME), dir = Math.sign(f.vx || f.dodgeDir || 1), cy = f.y - 26; ctx.translate(f.x, cy); ctx.rotate(k * Math.PI * 2 * dir); ctx.translate(-f.x, -cy); } else f.rollT = 0;
+  if (state === 'ko' && f.koClipY != null) { ctx.beginPath(); ctx.rect(-400, -400, W + 800, f.koClipY + 400); ctx.clip(); }
   if (state === 'ko' && f === KO.loser) { ctx.translate(f.x, f.y - 30); ctx.rotate(f.koRot || 0); ctx.scale(f.koScale ?? 1, f.koScale ?? 1); ctx.translate(-f.x, -(f.y - 30)); ctx.globalAlpha *= f.koAlpha ?? 1; }
   if (f.flip > 0) { const k = 1 - f.flip / 0.42, e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2, cy = f.y - 40; ctx.translate(f.x, cy); ctx.rotate(e * Math.PI * 2 * (Math.sign(f.faceS) || 1)); ctx.translate(-f.x, -cy); }
   drawTrails(f);
@@ -1657,13 +1659,14 @@ function drawFighter(f) {
   if (tags.length) { ctx.fillStyle = C.soft; ctx.font = '400 17px Anton, Impact, sans-serif'; ctx.textAlign = 'center'; ctx.fillText(tags.join(' + '), f.x, f.y - 96); }
   if (f.blind > 0) { ctx.save(); ctx.globalAlpha = 0.6; ctx.fillStyle = withA(f.blindEl === 'darkness' ? '#1a0b2e' : elCol(f.blindEl || 'light'), 0.75); ctx.beginPath(); ctx.arc(f.x, f.y - 70, 22 + Math.sin(clock * 20) * 3, 0, 7); ctx.fill(); ctx.restore(); }
 }
-function drawBody(f, P, fs, shakeX, col, ghost) {
+function drawBody(f, P, fs, shakeX, col, ghost) { // eslint-disable-line no-param-reassign
   const L1 = 17, L2 = 17, U1 = 14, U2 = 14, TORSO = 24;
   const hipX = f.x + shakeX, hipY = f.y - 34 + P.crouch;
   const neckX = hipX + Math.sin(P.lean) * TORSO * fs, neckY = hipY - Math.cos(P.lean) * TORSO;
   const limb = (x, y, a1, a2, l1, l2) => { const kx = x + Math.sin(a1) * l1 * fs, ky = y + Math.cos(a1) * l1; const ex = kx + Math.sin(a1 + a2) * l2 * fs, ey = ky + Math.cos(a1 + a2) * l2; return [kx, ky, ex, ey]; };
   const flash = !ghost && f.hitFlash > 0;
-  const ink = ghost ? col : flash ? (isDark ? '#ffffff' : C.red) : C.ink;
+  const ink = ghost ? col : (state === 'ko' && f.koInk) ? f.koInk : flash ? (isDark ? '#ffffff' : C.red) : C.ink;
+  if (!ghost && state === 'ko' && f.koHead) col = f.koHead;
   ctx.strokeStyle = ink; ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   const legs = [0, 1].map(i => limb(hipX, hipY, P.hipA[i], P.knee[i], L1, L2));
   const arms = [0, 1].map(i => limb(neckX, neckY + 3, P.sh[i] + P.lean, P.el[i], U1, U2));
@@ -2745,96 +2748,407 @@ function startRound() {
   down.clear(); pressed.clear();
   hideScreen();
 }
-/* ---------- KO finale: the winner finishes the match with a move in their element ---------- */
-const KO = { t: 0, dur: 3.4, winner: null, loser: null, el: 'fire', bolts: [], hit: false };
+/* ---------- KO finale ----------
+   The winner ends the match with a finisher that shows what their element *is*:
+   fire burns from below and leaves the loser charred, water rises and drowns, ice creeps in and shatters,
+   lightning comes from a storm, earth swallows, wind carries away, light judges from above, darkness
+   drags into the shadows, antimatter deletes, steel cuts once and cleanly.
+   Each finisher has its own timeline (0..1), effects behind and in front of the fighters, a screen grade and a word. */
+const KO = { t: 0, dur: 4.2, winner: null, loser: null, el: 'fire', hit: false, fx: {} };
+const ease = { out: t => 1 - Math.pow(1 - clamp(t, 0, 1), 3), in: t => Math.pow(clamp(t, 0, 1), 3), io: t => { t = clamp(t, 0, 1); return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; } };
+const seg01 = (u, a, b) => clamp((u - a) / (b - a), 0, 1);
+function koFS(f) { return Math.abs(f.faceS) < 0.15 ? Math.sign(f.faceS || 1) * 0.15 : f.faceS; }
+// draw a copy of the loser with optional ink/head colours (used for halves, glitch slices, x-ray, etc.)
+function koDrawLoser(ink, head, alpha = 1) {
+  const l = KO.loser; if (!l.pose) return;
+  const pi = l.koInk, ph = l.koHead;
+  if (ink) l.koInk = ink; if (head) l.koHead = head;
+  ctx.save(); ctx.globalAlpha *= alpha; drawBody(l, l.pose, koFS(l), 0, l.koHead || elCol(l.element), false); ctx.restore();
+  l.koInk = pi; l.koHead = ph;
+}
+
+const KO_FX = {
+  fire: {
+    word: 'INCINERATED', dur: 4.3, hitAt: 0.36,
+    update(K, w, l, u, dt, dir) {
+      w.castType = u < K.hitAt ? 'summon' : 'burst'; w.castAnim = u > 0.12 && u < 0.6 ? 0.25 : 0;
+      // heat gathers: embers drift toward the winner's hands
+      if (u < K.hitAt && Math.random() < 0.9) { const a = Math.random() * 6.28, r = 160 + Math.random() * 80; spawnP(w.x + Math.cos(a) * r, w.y - 60 + Math.sin(a) * r * 0.6, 'fire', -Math.cos(a) * 260, -Math.sin(a) * 160, 0.6, 3 + Math.random() * 3); }
+      if (u > K.hitAt) {
+        if (!K.fx.vy) { K.fx.vy = -1250; K.fx.spin = dir * 9; }
+        if (!K.fx.landed) { K.fx.vy += 2400 * dt; l.y += K.fx.vy * dt; l.x += dir * 120 * dt; l.koRot += K.fx.spin * dt; if (l.y >= GROUND) { l.y = GROUND; K.fx.landed = true; shake = 10; dust(l.x, l.y, 10, 1.6); l.koRot = dir * 1.45; } }
+        // burned to a crisp: the body darkens and flakes embers
+        const c = seg01(u, K.hitAt, K.hitAt + 0.25); l.koInk = c > 0.5 ? '#1c120d' : null; l.koHead = c > 0.5 ? '#2a1a12' : null;
+        if (Math.random() < 0.7) spawnP(l.x + (Math.random() - 0.5) * 30, l.y - 20 - Math.random() * 60, 'fire', (Math.random() - 0.5) * 40, -60 - Math.random() * 80, 0.8, 2 + Math.random() * 2);
+        if (K.fx.landed && Math.random() < 0.5) spawnP(l.x + (Math.random() - 0.5) * 30, l.y - 30, 'dust', (Math.random() - 0.5) * 20, -50 - Math.random() * 30, 1.6, 8, 'smoke');
+      }
+    },
+    back(K, w, l, u) {
+      const x = K.lx0, crack = seg01(u, 0.14, K.hitAt);
+      if (crack > 0 && u < K.hitAt + 0.05) { // the ground glows and splits
+        glowOn(); ctx.strokeStyle = withA(EL2.fire, 0.4 + crack * 0.6); ctx.lineWidth = 3 + crack * 4;
+        for (let k = 0; k < 6; k++) { ctx.beginPath(); ctx.moveTo(x, GROUND); let px = x; for (let j = 0; j < 4; j++) { px += (hash(k * 7 + j) - 0.5) * 50 + (k - 2.5) * 14 * crack; ctx.lineTo(px, GROUND + 2 + j * 3); } ctx.stroke(); }
+        const g = ctx.createRadialGradient(x, GROUND, 4, x, GROUND, 80 * crack); g.addColorStop(0, withA(EL2.fire, 0.8)); g.addColorStop(1, withA(EL2.fire, 0)); ctx.fillStyle = g; ctx.fillRect(x - 90, GROUND - 90, 180, 100); glowOff();
+      }
+      const e = seg01(u, K.hitAt, K.hitAt + 0.5); if (e <= 0 || e >= 1) return;
+      const h = 520 * ease.out(e * 2.2) * (1 - ease.in((e - 0.55) / 0.45)), wd = 70 + Math.sin(clock * 30) * 6;
+      glowOn();
+      for (let layer = 0; layer < 3; layer++) { // three tongues of flame, hotter in the middle
+        const lw = wd * (1 - layer * 0.28), lh = h * (1 - layer * 0.12), colr = [elCol('fire'), '#ff9a2e', EL2.fire][layer];
+        ctx.fillStyle = withA(colr, 0.85); ctx.beginPath(); ctx.moveTo(x - lw, GROUND);
+        for (let k = 0; k <= 8; k++) { const t = k / 8, yy = GROUND - lh * t, xx = x - lw * (1 - t) + Math.sin(clock * 22 + k + layer) * 10 * (1 - t); ctx.lineTo(xx, yy); }
+        for (let k = 8; k >= 0; k--) { const t = k / 8, yy = GROUND - lh * t, xx = x + lw * (1 - t) + Math.sin(clock * 19 + k * 1.3 + layer) * 10 * (1 - t); ctx.lineTo(xx, yy); }
+        ctx.closePath(); ctx.fill();
+      }
+      glowOff();
+    },
+    screen(K, u) { const a = 0.18 * seg01(u, 0.1, 0.4) * (1 - seg01(u, 0.85, 1)); ctx.fillStyle = `rgba(255,80,10,${a})`; ctx.fillRect(0, 0, W, H); }
+  },
+
+  water: {
+    word: 'DROWNED', dur: 4.4, hitAt: 0.42,
+    update(K, w, l, u, dt, dir) {
+      w.castType = 'wave'; w.castAnim = u > 0.08 && u < 0.5 ? 0.25 : 0;
+      const front = K.wx0 + dir * (ease.io(seg01(u, 0.2, 0.62)) * 1500 - 240); K.fx.front = front;
+      if ((front - l.x) * dir > -30 && u < 0.7) { // caught inside the wave and carried
+        if (!K.fx.caught) { K.fx.caught = true; shake = 12; }
+        l.x = clamp(l.x + dir * 560 * dt, 30, W - 30); l.y = GROUND - 90 - Math.sin(clock * 6) * 20; l.koRot += dir * 5 * dt;
+        if (Math.random() < 0.8) spawnP(l.x + (Math.random() - 0.5) * 40, l.y - Math.random() * 60, 'water', (Math.random() - 0.5) * 30, -60 - Math.random() * 60, 1, 2 + Math.random() * 3, 'dot');
+      } else if (K.fx.caught) { l.y = Math.min(GROUND, l.y + 500 * dt); l.koRot += (dir * 1.5 - l.koRot) * Math.min(1, dt * 5); if (l.y >= GROUND && !K.fx.down) { K.fx.down = true; for (let k = 0; k < 14; k++) spawnP(l.x, GROUND - 4, 'water', (Math.random() - 0.5) * 400, -100 - Math.random() * 200, 0.7, 3, 'drop'); } }
+    },
+    back(K, w, l, u) { // water rising from the ground behind the winner
+      const r = seg01(u, 0.04, 0.22) * (1 - seg01(u, 0.2, 0.3));
+      if (r > 0) { ctx.fillStyle = withA(elCol('water'), 0.55); for (let k = 0; k < 7; k++) { const x = w.x - (k - 3) * 26, h = r * (40 + hash(k + 3) * 70); ctx.beginPath(); ctx.ellipse(x, GROUND - h / 2, 8, h / 2, 0, 0, 7); ctx.fill(); } }
+      if (K.fx.down) { ctx.fillStyle = withA(elCol('water'), 0.5); ctx.beginPath(); ctx.ellipse(l.x, GROUND + 2, 70, 9, 0, 0, 7); ctx.fill(); }
+    },
+    front(K, w, l, u, dir) { // a curling wall of water sweeping the arena
+      const e = seg01(u, 0.2, 0.7); if (e <= 0 || e >= 1) return;
+      const fx = K.fx.front, Hh = 230 * Math.sin(Math.min(1, e * 1.25) * Math.PI), back = fx - dir * 700;
+      const col = elCol('water');
+      ctx.fillStyle = withA(col, 0.72); ctx.beginPath(); ctx.moveTo(back, GROUND);
+      for (let k = 0; k <= 24; k++) { const t = k / 24, x = back + (fx - back) * t, y = GROUND - Hh * Math.pow(t, 0.7) - Math.sin(clock * 8 + k) * 6; ctx.lineTo(x, y); }
+      // curling lip at the front
+      ctx.quadraticCurveTo(fx + dir * 70, GROUND - Hh - 30, fx + dir * 40, GROUND - Hh + 50);
+      ctx.quadraticCurveTo(fx + dir * 10, GROUND - Hh * 0.4, fx + dir * 20, GROUND); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 4; ctx.beginPath();
+      for (let k = 14; k <= 24; k++) { const t = k / 24, x = back + (fx - back) * t, y = GROUND - Hh * Math.pow(t, 0.7) - Math.sin(clock * 8 + k) * 6; if (k === 14) ctx.moveTo(x, y); else ctx.lineTo(x, y); } ctx.stroke();
+      for (let k = 0; k < 10; k++) { ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.beginPath(); ctx.arc(fx + dir * (20 + hash(k + clock) * 50), GROUND - Hh + hash(k * 3) * 40, 3 + hash(k) * 5, 0, 7); ctx.fill(); }
+    },
+    screen(K, u) { if (K.fx.caught && u < 0.72) { ctx.fillStyle = 'rgba(20,90,200,0.22)'; ctx.fillRect(0, 0, W, H); ctx.fillStyle = 'rgba(255,255,255,0.35)'; for (let k = 0; k < 14; k++) { const x = hash(k) * W, y = H - ((clock * 120 + hash(k + 9) * H) % H); ctx.beginPath(); ctx.arc(x, y, 3 + hash(k + 4) * 6, 0, 7); ctx.fill(); } } }
+  },
+
+  ice: {
+    word: 'SHATTERED', dur: 4.4, hitAt: 0.58,
+    update(K, w, l, u, dt, dir) {
+      w.castType = u < 0.5 ? 'zone' : 'projectile'; w.castAnim = u > 0.06 && u < 0.64 ? 0.25 : 0;
+      K.fx.frost = ease.out(seg01(u, 0.06, 0.3)); K.fx.block = ease.out(seg01(u, 0.28, 0.46)); K.fx.crack = seg01(u, 0.47, K.hitAt);
+      if (K.fx.block > 0.2) { l.stun = 0; l.koFreeze = true; } // frozen mid-motion
+      if (u > K.hitAt && !K.fx.shards) { // the block bursts into shards that take the loser with it
+        shake = 16; l.koHide = true; K.fx.shards = [];
+        for (let k = 0; k < 38; k++) K.fx.shards.push({ x: l.x + (Math.random() - 0.5) * 60, y: l.y - Math.random() * 110, vx: (Math.random() - 0.5) * 700 + dir * 150, vy: -200 - Math.random() * 500, r: Math.random() * 6, vr: (Math.random() - 0.5) * 14, s: 6 + Math.random() * 16, body: Math.random() < 0.3 });
+      }
+      if (K.fx.shards) for (const s of K.fx.shards) { s.vy += 1700 * dt; s.x += s.vx * dt; s.y += s.vy * dt; s.r += s.vr * dt; if (s.y > GROUND) { s.y = GROUND; s.vy *= -0.25; s.vx *= 0.6; s.vr *= 0.5; } }
+      if (u > 0.2 && Math.random() < 0.6) spawnP(Math.random() * W, -10, 'ice', (Math.random() - 0.5) * 30, 40 + Math.random() * 40, 3, 3 + Math.random() * 3, 'snow');
+    },
+    back(K, w, l, u, dir) { // frost creeping along the floor from winner to loser
+      const f = K.fx.frost; if (!f) return; const x0 = w.x, x1 = x0 + (K.lx0 - x0) * f;
+      ctx.strokeStyle = withA('#e8fbff', 0.9); ctx.lineWidth = 2;
+      for (let x = x0; (x1 - x) * dir > 0; x += dir * 18) { const h = 6 + hash(x) * 16; ctx.beginPath(); ctx.moveTo(x, GROUND); ctx.lineTo(x + dir * 4, GROUND - h); ctx.moveTo(x + dir * 4, GROUND - h * 0.6); ctx.lineTo(x - dir * 4, GROUND - h * 0.9); ctx.stroke(); }
+      ctx.fillStyle = withA(elCol('ice'), 0.35); ctx.fillRect(Math.min(x0, x1), GROUND - 3, Math.abs(x1 - x0), 5);
+    },
+    front(K, w, l, u) {
+      const b = K.fx.block;
+      if (b > 0 && !K.fx.shards) { // crystal grows up from the feet
+        const top = l.y - 118 * b, x = l.x;
+        ctx.fillStyle = withA(elCol('ice'), 0.45); ctx.strokeStyle = 'rgba(255,255,255,0.95)'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(x - 38, l.y); ctx.lineTo(x - 44, Math.max(top, l.y - 80)); ctx.lineTo(x - 20, top); ctx.lineTo(x + 24, top + 6); ctx.lineTo(x + 42, Math.max(top + 30, l.y - 70)); ctx.lineTo(x + 36, l.y); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x - 26, l.y - 20); ctx.lineTo(x - 30, Math.max(top + 14, l.y - 90)); ctx.stroke();
+        if (K.fx.crack > 0) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2.5; ctx.beginPath(); for (let k = 0; k < 5; k++) { let px = x + (hash(k) - 0.5) * 20, py = l.y - 60; ctx.moveTo(px, py); for (let j = 0; j < 4 * K.fx.crack; j++) { px += (hash(k * 5 + j) - 0.5) * 34; py += (hash(k * 5 + j + 2) - 0.5) * 34; ctx.lineTo(px, py); } } ctx.stroke(); }
+      }
+      if (K.fx.shards) for (const s of K.fx.shards) { ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(s.r); ctx.fillStyle = s.body ? C.ink : withA(elCol('ice'), 0.85); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(0, -s.s); ctx.lineTo(s.s * 0.5, s.s * 0.6); ctx.lineTo(-s.s * 0.5, s.s * 0.4); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore(); }
+    },
+    screen(K, u) { const a = 0.22 * seg01(u, 0.1, 0.4); ctx.fillStyle = `rgba(200,240,255,${a})`; ctx.fillRect(0, 0, W, H); const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.4, W / 2, H / 2, W * 0.7); g.addColorStop(0, 'rgba(230,250,255,0)'); g.addColorStop(1, `rgba(230,250,255,${a * 2.5})`); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); }
+  },
+
+  lightning: {
+    word: 'THUNDERSTRUCK', dur: 4.2, hitAt: 0.45,
+    update(K, w, l, u, dt, dir) {
+      w.castType = 'strike'; w.castAnim = u > 0.1 && u < 0.55 ? 0.25 : 0;
+      if (u > 0.12 && u < K.hitAt && Math.random() < 0.25) K.fx.arc = { t: 0.08, seed: Math.random() * 100 };
+      if (K.fx.arc) K.fx.arc.t -= dt;
+      if (u > K.hitAt && !K.fx.struck) { K.fx.struck = true; K.fx.bolt = { t: 0.55, seed: Math.random() * 100 }; K.fx.xray = 0.4; shake = 22; burstParticles(l.x, chestY(l), 'lightning', 40, 600); }
+      if (K.fx.bolt) K.fx.bolt.t -= dt; if (K.fx.xray > 0) K.fx.xray -= dt;
+      if (K.fx.struck) {
+        l.stun = 1; l.koInk = K.fx.xray > 0 && Math.floor(clock * 30) % 2 ? '#ffffff' : (u > 0.62 ? '#24221a' : null); l.koHead = l.koInk;
+        l.koRot = dir * 1.5 * ease.in(seg01(u, 0.6, 0.72)); l.y = K.ly0; if (Math.random() < 0.5) spawnP(l.x + (Math.random() - 0.5) * 30, l.y - Math.random() * 70, 'lightning', (Math.random() - 0.5) * 200, -Math.random() * 200, 0.3, 2, 'spark');
+        if (u > 0.62 && Math.random() < 0.4) spawnP(l.x, l.y - 30, 'dust', (Math.random() - 0.5) * 20, -60, 1.5, 7, 'smoke');
+      }
+    },
+    back(K, w, l, u) { // storm clouds roll in over the arena
+      const c = ease.out(seg01(u, 0, 0.3)); if (!c) return;
+      ctx.fillStyle = withA('#1a1c26', 0.85 * c);
+      for (let k = 0; k < 12; k++) { const x = (k / 11) * (W + 200) - 100, y = -40 + c * 110 + Math.sin(k * 2) * 18; ctx.beginPath(); ctx.arc(x, y, 90 + hash(k) * 40, 0, 7); ctx.fill(); }
+      if (K.fx.arc && K.fx.arc.t > 0) { glowOn(); ctx.strokeStyle = EL2.lightning; ctx.lineWidth = 2; ctx.beginPath(); let x = w.x, y = w.y - 60; ctx.moveTo(x, y); while (y > 80) { y -= 30; x += (hash(K.fx.arc.seed + y) - 0.5) * 40; ctx.lineTo(x, y); } ctx.stroke(); glowOff(); }
+    },
+    front(K, w, l, u) {
+      const b = K.fx.bolt; if (!b || b.t <= 0) return;
+      const thick = 4 + 14 * (b.t / 0.55);
+      glowOn();
+      for (let br = 0; br < 3; br++) { // the main bolt and two branches
+        ctx.strokeStyle = br ? withA(EL2.lightning, 0.6) : EL2.lightning; ctx.lineWidth = br ? thick * 0.35 : thick;
+        ctx.beginPath(); let x = l.x + (br - 1) * 80, y = 60; ctx.moveTo(x, y);
+        const endY = br ? 260 + br * 60 : chestY(l);
+        while (y < endY) { y += 36; x += (hash(b.seed + y + br * 99) - 0.5) * 70; if (!br) x += (l.x - x) * 0.25; ctx.lineTo(x, y); }
+        if (!br) ctx.lineTo(l.x, chestY(l)); ctx.stroke();
+      }
+      glowOff();
+    },
+    screen(K, u) {
+      const dark = 0.35 * ease.out(seg01(u, 0, 0.3)) * (1 - seg01(u, 0.85, 1)); ctx.fillStyle = `rgba(8,10,24,${dark})`; ctx.fillRect(0, 0, W, H);
+      if (K.fx.arc && K.fx.arc.t > 0.05) { ctx.fillStyle = 'rgba(230,240,255,0.15)'; ctx.fillRect(0, 0, W, H); }
+      if (K.fx.bolt && K.fx.bolt.t > 0.4) { ctx.fillStyle = `rgba(255,255,240,${(K.fx.bolt.t - 0.4) * 5})`; ctx.fillRect(0, 0, W, H); }
+    }
+  },
+
+  earth: {
+    word: 'BURIED', dur: 4.4, hitAt: 0.4,
+    update(K, w, l, u, dt, dir) {
+      w.castType = 'wave'; w.castAnim = (u > 0.1 && u < 0.2) || (u > 0.34 && u < 0.46) ? 0.25 : 0;
+      if (u > 0.14 && u < K.hitAt) shake = Math.max(shake, 4 + seg01(u, 0.14, K.hitAt) * 8);
+      if (u > 0.2 && u < 0.5 && Math.random() < 0.5) spawnP(K.lx0 + (Math.random() - 0.5) * 120, GROUND - 2, 'earth', (Math.random() - 0.5) * 80, -120 - Math.random() * 150, 0.7, 3 + Math.random() * 3, 'rock');
+      K.fx.open = ease.out(seg01(u, 0.32, 0.46)) * (1 - ease.in(seg01(u, 0.62, 0.7)));
+      if (u > K.hitAt) { l.koClipY = GROUND + 2; l.y = K.ly0 + ease.in(seg01(u, K.hitAt, 0.62)) * 150; l.stun = 1; }
+      if (u > 0.7 && !K.fx.slam) { K.fx.slam = true; shake = 20; for (let k = 0; k < 24; k++) spawnP(K.lx0 + (Math.random() - 0.5) * 90, GROUND - 6, 'dust', (Math.random() - 0.5) * 500, -Math.random() * 220, 1.1, 10 + Math.random() * 8, 'smoke'); }
+      if (u > 0.68) l.koHide = true;
+    },
+    back(K, w, l, u) {
+      const o = K.fx.open, x = K.lx0;
+      if (o > 0) { // the floor tears open into a dark fissure
+        ctx.fillStyle = '#0b0703'; ctx.beginPath(); ctx.moveTo(x - 70 * o, GROUND); for (let k = 0; k <= 8; k++) { const t = k / 8; ctx.lineTo(x - 70 * o + 140 * o * t, GROUND + 30 + Math.sin(t * Math.PI) * 120 * o + (hash(k) - 0.5) * 16); } ctx.lineTo(x + 70 * o, GROUND); ctx.closePath(); ctx.fill();
+      }
+    },
+    front(K, w, l, u) {
+      const x = K.lx0, c = elCol('earth');
+      const slab = ease.in(seg01(u, 0.6, 0.7)); // two slabs of rock slam the crack shut
+      if (u > 0.55 && u < 0.78) { ctx.fillStyle = c; ctx.strokeStyle = C.ink; ctx.lineWidth = 3; for (const s of [-1, 1]) { const ex = x + s * (220 - 150 * slab); ctx.beginPath(); ctx.moveTo(ex, GROUND); ctx.lineTo(ex - s * 10, GROUND - 120 * (1 - slab * 0.7)); ctx.lineTo(ex + s * 70, GROUND - 90 * (1 - slab * 0.7)); ctx.lineTo(ex + s * 90, GROUND); ctx.closePath(); ctx.fill(); ctx.stroke(); } }
+      const g = ease.out(seg01(u, 0.74, 0.86)); // a rough headstone rises where they went down
+      if (g > 0) { const hh = 70 * g; ctx.fillStyle = c; ctx.strokeStyle = C.ink; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(x - 24, GROUND); ctx.lineTo(x - 24, GROUND - hh + 14); ctx.quadraticCurveTo(x, GROUND - hh - 12, x + 24, GROUND - hh + 14); ctx.lineTo(x + 24, GROUND); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.beginPath(); ctx.moveTo(x - 4, GROUND - hh + 20); ctx.lineTo(x + 6, GROUND - hh + 34); ctx.lineTo(x - 2, GROUND - hh + 46); ctx.stroke(); }
+    },
+    screen(K, u) { const a = 0.16 * seg01(u, 0.1, 0.4); ctx.fillStyle = `rgba(120,80,30,${a})`; ctx.fillRect(0, 0, W, H); }
+  },
+
+  wind: {
+    word: 'SWEPT AWAY', dur: 4.2, hitAt: 0.34,
+    update(K, w, l, u, dt, dir) {
+      w.castType = 'orbit'; w.castAnim = u > 0.06 && u < 0.6 ? 0.25 : 0;
+      if (Math.random() < 0.7) spawnP(dir > 0 ? -10 : W + 10, 100 + Math.random() * (GROUND - 100), 'wind', dir * (700 + Math.random() * 500), (Math.random() - 0.5) * 60, 1.4, 2 + Math.random() * 2, Math.random() < 0.3 ? 'rock' : 'streak');
+      if (u > K.hitAt) {
+        const e = seg01(u, K.hitAt, 0.78); // lifted, spun, then flung into the sky
+        l.x = K.lx0 + Math.sin(e * 20) * 46 * (1 - e) + dir * ease.in(seg01(e, 0.6, 1)) * 500;
+        l.y = K.ly0 - ease.in(e) * 900; l.koRot += (6 + e * 20) * dt * dir; l.stun = 1;
+        if (e >= 1 && !K.fx.star) { K.fx.star = { x: clamp(l.x, 60, W - 60), t: 0 }; }
+      }
+      if (K.fx.star) K.fx.star.t += dt;
+    },
+    front(K, w, l, u) {
+      const e = seg01(u, 0.2, 0.85); if (e > 0 && e < 1) { // the funnel
+        const x0 = K.lx0, grow = ease.out(seg01(e, 0, 0.3)) * (1 - ease.in(seg01(e, 0.85, 1)));
+        ctx.strokeStyle = withA(elCol('wind'), 0.8 * grow); ctx.lineWidth = 3;
+        for (let k = 0; k < 18; k++) { const t = k / 17, y = GROUND - t * 520 * grow, r = (16 + t * 120) * grow, sx = x0 + Math.sin(clock * 3 + t * 4) * 24 * t; ctx.beginPath(); ctx.ellipse(sx, y, r, r * 0.22, 0, clock * 10 + k, clock * 10 + k + 4.6); ctx.stroke(); }
+      }
+      const st = K.fx.star; if (st && st.t < 1.2) { // twinkle where they vanished
+        const s = 18 * Math.sin(Math.min(1, st.t / 0.6) * Math.PI); ctx.save(); ctx.translate(st.x, 70); ctx.rotate(st.t * 3); ctx.fillStyle = '#ffffff'; starPath(s, s * 0.25, 4); ctx.fill(); ctx.restore();
+      }
+    },
+    screen(K, u) {}
+  },
+
+  light: {
+    word: 'PURIFIED', dur: 4.4, hitAt: 0.5,
+    update(K, w, l, u, dt, dir) {
+      w.castType = 'summon'; w.castAnim = u > 0.08 && u < 0.62 ? 0.25 : 0;
+      w.y = K.wy0 - ease.io(seg01(u, 0.05, 0.3)) * 26 * (1 - seg01(u, 0.85, 1)); // the winner lifts off the ground
+      if (u > K.hitAt) {
+        if (!K.fx.hit) { K.fx.hit = true; shake = 14; }
+        const e = seg01(u, K.hitAt, 0.85);
+        l.koInk = '#fffbe6'; l.koHead = '#fffbe6'; l.koAlpha = 1 - ease.in(e); l.y = K.ly0 - ease.in(e) * 140; l.stun = 0;
+        if (Math.random() < 0.9) spawnP(l.x + (Math.random() - 0.5) * 40, l.y - Math.random() * 100, 'light', (Math.random() - 0.5) * 40, -100 - Math.random() * 140, 1.1, 3 + Math.random() * 2, 'glint');
+      }
+    },
+    back(K, w, l, u) {
+      const r = ease.out(seg01(u, 0.08, 0.4)); if (!r) return; // the sky opens: god rays fan down onto the loser
+      glowOn(); for (let k = 0; k < 9; k++) { const a = -0.5 + k / 8, x = K.lx0 + a * 80; ctx.fillStyle = withA(EL2.light, 0.12 * r); ctx.beginPath(); ctx.moveTo(x - 10, -20); ctx.lineTo(x + 10, -20); ctx.lineTo(K.lx0 + a * 360, GROUND); ctx.lineTo(K.lx0 + a * 300, GROUND); ctx.closePath(); ctx.fill(); } glowOff();
+    },
+    front(K, w, l, u) {
+      const x = K.lx0, halo = ease.out(seg01(u, 0.2, 0.4)) * (1 - seg01(u, 0.8, 0.9));
+      if (halo > 0) { ctx.strokeStyle = withA(EL2.light, halo); ctx.lineWidth = 4; ctx.beginPath(); ctx.ellipse(x, K.ly0 - 104 - (u > K.hitAt ? ease.in(seg01(u, K.hitAt, 0.85)) * 140 : 0), 22, 7, 0, 0, 7); ctx.stroke(); }
+      const sp = seg01(u, 0.36, K.hitAt); // a spear of light falls from the sky
+      if (sp > 0 && u < K.hitAt + 0.06) { const tip = -40 + ease.in(sp) * (K.ly0 - 40); glowOn(); ctx.fillStyle = EL2.light; ctx.beginPath(); ctx.moveTo(x, tip + 40); ctx.lineTo(x - 10, tip - 20); ctx.lineTo(x - 4, tip - 300); ctx.lineTo(x + 4, tip - 300); ctx.lineTo(x + 10, tip - 20); ctx.closePath(); ctx.fill(); glowOff(); }
+      if (u > K.hitAt && u < K.hitAt + 0.3) { const e = seg01(u, K.hitAt, K.hitAt + 0.3); glowOn(); ctx.fillStyle = withA(EL2.light, 0.9 * (1 - e)); ctx.fillRect(x - 40 - e * 40, 0, 80 + e * 80, GROUND); glowOff(); }
+    },
+    screen(K, u) { if (u > K.hitAt && u < K.hitAt + 0.25) { ctx.fillStyle = `rgba(255,252,235,${0.7 * (1 - seg01(u, K.hitAt, K.hitAt + 0.25))})`; ctx.fillRect(0, 0, W, H); } }
+  },
+
+  darkness: {
+    word: 'CONSUMED', dur: 4.5, hitAt: 0.4,
+    update(K, w, l, u, dt, dir) {
+      w.castType = 'zone'; w.castAnim = u > 0.06 && u < 0.62 ? 0.25 : 0;
+      if (u > K.hitAt) { // tendrils have them: dragged down into the pool
+        l.stun = 1; l.koClipY = GROUND + 1; l.y = K.ly0 + ease.in(seg01(u, K.hitAt + 0.08, 0.7)) * 140; l.x = K.lx0 + Math.sin(clock * 30) * 2;
+      }
+      if (u > 0.72) l.koHide = true;
+    },
+    back(K, w, l, u, dir) {
+      const s = ease.out(seg01(u, 0.06, 0.3)); if (!s) return;
+      // the winner's shadow stretches along the floor toward the loser...
+      const x0 = w.x, x1 = x0 + (K.lx0 - x0) * s; ctx.fillStyle = 'rgba(6,2,14,0.85)'; ctx.beginPath(); ctx.moveTo(x0, GROUND - 2); ctx.quadraticCurveTo((x0 + x1) / 2, GROUND - 10, x1, GROUND - 2); ctx.quadraticCurveTo((x0 + x1) / 2, GROUND + 8, x0, GROUND + 4); ctx.fill();
+      // ...and pools under them
+      const p = ease.out(seg01(u, 0.25, 0.42)) * (1 - ease.in(seg01(u, 0.82, 0.95))); if (p > 0) { ctx.fillStyle = '#05010c'; ctx.beginPath(); ctx.ellipse(K.lx0, GROUND + 1, 90 * p, 13 * p, 0, 0, 7); ctx.fill(); }
+    },
+    front(K, w, l, u) {
+      const t = seg01(u, 0.3, 0.72), x = K.lx0; if (t > 0 && t < 1) { // tendrils rise and wrap around them
+        ctx.lineCap = 'round';
+        for (let k = 0; k < 7; k++) { const sx = x + (k - 3) * 22, h = ease.out(seg01(t, 0, 0.5)) * (60 + hash(k) * 70) * (1 - ease.in(seg01(t, 0.6, 1)) * 0.9), sway = Math.sin(clock * 4 + k) * 20; const path = () => { ctx.beginPath(); ctx.moveTo(sx, GROUND); ctx.bezierCurveTo(sx + sway, GROUND - h * 0.4, x + (sx - x) * 0.2 - sway, GROUND - h * 0.8, x + (3 - k) * 4, Math.max(l.y - 80, GROUND - h)); };
+          glowOn(); ctx.strokeStyle = withA(elCol('darkness'), 0.8); ctx.lineWidth = 15 - Math.abs(k - 3) * 1.5; path(); ctx.stroke(); glowOff(); ctx.strokeStyle = '#0a0414'; ctx.lineWidth = 9 - Math.abs(k - 3); path(); ctx.stroke(); }
+        ctx.lineCap = 'butt';
+      }
+      const eyes = seg01(u, 0.74, 0.9); if (eyes > 0 && eyes < 1) { const open = Math.sin(eyes * Math.PI); ctx.fillStyle = elCol('darkness'); glowOn(); for (const s of [-1, 1]) { ctx.beginPath(); ctx.ellipse(x + s * 12, GROUND - 4, 5, 3 * open, 0, 0, 7); ctx.fill(); } glowOff(); }
+    },
+    screen(K, u) { // the light drains away until only the winner is lit
+      const d = ease.out(seg01(u, 0.04, 0.35)) * (1 - seg01(u, 0.9, 1)), w = KO.winner; const sx = (w.x - cam.x) * cam.z + W / 2, sy = (w.y - 50 - cam.y) * cam.z + H / 2;
+      const g = ctx.createRadialGradient(sx, sy, 60, sx, sy, 420); g.addColorStop(0, `rgba(4,1,10,${0.15 * d})`); g.addColorStop(1, `rgba(4,1,10,${0.85 * d})`); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    }
+  },
+
+  antimatter: {
+    word: 'ERASED', dur: 4.2, hitAt: 0.38,
+    update(K, w, l, u, dt, dir) {
+      w.castType = 'beam'; w.castAnim = u > 0.1 && u < 0.5 ? 0.25 : 0;
+      if (u > K.hitAt) { l.koHide = true; l.stun = 0; K.fx.erase = ease.in(seg01(u, K.hitAt + 0.05, 0.74)); if (Math.random() < 0.9) spawnP(l.x + (Math.random() - 0.5) * 50, l.y - Math.random() * 100, 'antimatter', (Math.random() - 0.5) * 260, (Math.random() - 0.5) * 260, 0.5, 3 + Math.random() * 5, 'glitch'); }
+      if (u > 0.74 && !K.fx.pop) { K.fx.pop = true; shake = 12; }
+    },
+    front(K, w, l, u) {
+      if (u < 0.3 && u > 0.1) { // a targeting reticle locks onto the loser
+        const e = seg01(u, 0.1, 0.3), r = 70 - e * 30; ctx.strokeStyle = elCol('antimatter'); ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(l.x, l.y - 50, r, 0, 7); ctx.stroke();
+        for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2 + e * 2; ctx.beginPath(); ctx.moveTo(l.x + Math.cos(a) * (r - 10), l.y - 50 + Math.sin(a) * (r - 10)); ctx.lineTo(l.x + Math.cos(a) * (r + 14), l.y - 50 + Math.sin(a) * (r + 14)); ctx.stroke(); }
+      }
+      if (u <= K.hitAt || K.fx.erase >= 1) {
+        if (K.fx.pop && u < 0.82) { const e = seg01(u, 0.74, 0.82); ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(K.lx0, K.ly0 - 50, 40 * Math.sin(e * Math.PI), 0, 7); ctx.fill(); ctx.strokeStyle = elCol('antimatter'); ctx.lineWidth = 3; ctx.stroke(); }
+        return;
+      }
+      // the body breaks into horizontal slices that slip sideways in RGB and blink out one by one
+      const bands = 14, top = l.y - 112, h = 120 / bands;
+      for (let k = 0; k < bands; k++) {
+        if (hash(k * 3.1 + 7) < K.fx.erase) continue;
+        const dx = (hash(k + Math.floor(clock * 20)) - 0.5) * 40 * (0.2 + K.fx.erase);
+        ctx.save(); ctx.beginPath(); ctx.rect(l.x - 80, top + k * h, 160, h + 0.5); ctx.clip();
+        ctx.translate(dx - 4, 0); koDrawLoser('#ff2bd6', '#ff2bd6', 0.8);
+        ctx.translate(8, 0); koDrawLoser('#2bf0ff', '#2bf0ff', 0.8);
+        ctx.translate(-4, 0); koDrawLoser();
+        ctx.restore();
+      }
+    },
+    screen(K, u) {
+      const g = seg01(u, 0.3, 0.8) * (1 - seg01(u, 0.88, 1)); if (!g) return;
+      ctx.fillStyle = `rgba(0,0,0,${0.12 * g})`; for (let y = 0; y < H; y += 4) ctx.fillRect(0, y, W, 1.5); // scanlines
+      for (let k = 0; k < 6; k++) if (hash(k + Math.floor(clock * 14)) < 0.5 * g) { const y = hash(k * 7 + Math.floor(clock * 14)) * H; ctx.fillStyle = k % 2 ? 'rgba(255,43,214,0.25)' : 'rgba(43,240,255,0.25)'; ctx.fillRect(0, y, W, 6 + hash(k) * 16); }
+    }
+  },
+
+  steel: {
+    word: 'SEVERED', dur: 4.2, hitAt: 0.4,
+    update(K, w, l, u, dt, dir) {
+      // stillness, one step through, then the cut shows
+      w.castType = u < 0.36 ? 'shield' : 'dash'; w.castAnim = u < 0.36 ? 0.25 : 0;
+      if (u > 0.36 && !K.fx.passed) { K.fx.passed = true; K.fx.streak = { x0: w.x, x1: K.lx0 + dir * 170, t: 0.3 }; w.x = K.lx0 + dir * 170; w.face = -dir; shake = 6; }
+      if (K.fx.streak) K.fx.streak.t -= dt;
+      if (u > 0.52 && !K.fx.cut) { K.fx.cut = true; K.fx.slide = 0; shake = 14; l.koHide = true; for (let k = 0; k < 18; k++) spawnP(l.x, l.y - 52, 'steel', (Math.random() - 0.5) * 500, -Math.random() * 300, 0.5, 2, 'spark'); spillBlood(l.x, l.y - 52, dir, 1); }
+      if (K.fx.cut) K.fx.slide += dt;
+      l.stun = 0;
+    },
+    front(K, w, l, u, dir) {
+      const s = K.fx.streak; if (s && s.t > 0) { ctx.strokeStyle = withA('#ffffff', s.t / 0.3); ctx.lineWidth = 6 * s.t / 0.3 + 1; ctx.beginPath(); ctx.moveTo(s.x0, K.ly0 - 52); ctx.lineTo(s.x1, K.ly0 - 52); ctx.stroke(); }
+      if (u > 0.44 && u < 0.56) { // the cut line glints across them a beat after the pass
+        const e = seg01(u, 0.44, 0.52); ctx.save(); ctx.translate(l.x, l.y - 52); ctx.rotate(-0.45 * dir); ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(-60, 0); ctx.lineTo(-60 + 120 * e, 0); ctx.stroke(); ctx.restore();
+      }
+      if (!K.fx.cut) return;
+      // two halves: the top slides off along the cut and falls, the bottom crumples
+      const a = -0.45 * dir, cx = l.x, cy = l.y - 52, sl = K.fx.slide, nx = Math.cos(a), ny = Math.sin(a);
+      const half = (sign, dx, dy, rot) => { ctx.save(); ctx.translate(cx + dx, cy + dy); ctx.rotate(rot); ctx.translate(-cx, -cy);
+        ctx.beginPath(); ctx.moveTo(cx - nx * 400, cy - ny * 400); ctx.lineTo(cx + nx * 400, cy + ny * 400); ctx.lineTo(cx + nx * 400 - ny * 400 * sign, cy + ny * 400 + nx * 400 * sign); ctx.lineTo(cx - nx * 400 - ny * 400 * sign, cy - ny * 400 + nx * 400 * sign); ctx.closePath(); ctx.clip();
+        koDrawLoser(); ctx.restore(); };
+      const fall = Math.min(1, sl / 0.9);
+      half(-1, nx * dir * 40 * ease.out(fall), Math.min(52, 260 * fall * fall), dir * 1.2 * fall); // top
+      half(1, 0, 0, dir * 0.25 * ease.in(seg01(sl, 0.4, 1)));                                        // bottom
+    },
+    screen(K, u) { // colour drains while the swordsman holds still
+      const d = seg01(u, 0.04, 0.3) * (1 - seg01(u, 0.5, 0.56)); if (d > 0) { ctx.save(); ctx.globalCompositeOperation = 'saturation'; ctx.fillStyle = `rgba(128,128,128,${d})`; ctx.fillRect(0, 0, W, H); ctx.restore(); }
+    }
+  }
+};
+
 function startKO(winnerSlot) {
   const [a, b] = fighters;
   const w = winnerSlot !== undefined ? (winnerSlot < 0 ? null : fighters[winnerSlot]) : (a.score === b.score ? null : a.score > b.score ? a : b);
   if (!w) { state = 'results'; showResults(); return; } // a draw gets no finisher
-  const l = opp(w);
-  Object.assign(KO, { t: 0, winner: w, loser: l, el: w.element, hit: false, bolts: [], x0: l.x, y0: l.y, vy: 0, vx: 0, seed: Math.random() * 100 });
+  const l = opp(w), spec = KO_FX[w.element] || KO_FX.fire;
+  Object.assign(KO, { t: 0, dur: spec.dur, hitAt: spec.hitAt, winner: w, loser: l, el: w.element, spec, fx: {}, lx0: l.x, ly0: GROUND, wx0: w.x, wy0: GROUND, hit: false });
   state = 'ko'; clearArena(); slowmo = 0; hitstop = 0;
-  w.face = l.x > w.x ? 1 : -1; l.face = -w.face; w.dash = null; l.dash = null; l.shield = null; w.shield = null;
-  l.koRot = 0; l.koScale = 1; l.koAlpha = 1; w.vx = 0; l.vx = 0;
+  for (const f of fighters) { f.dash = null; f.shield = null; f.orbit = null; f.vx = 0; f.vy = 0; f.y = GROUND; f.dodgeT = 0; f.blind = 0; f.koInk = null; f.koHead = null; f.koHide = false; f.koClipY = null; f.koRot = 0; f.koScale = 1; f.koAlpha = 1; f.koFreeze = false; }
+  // stand them at a dramatic distance
+  if (Math.abs(l.x - w.x) < 260) l.x = clamp(w.x + (Math.sign(l.x - w.x) || 1) * 300, 80, W - 80);
+  if (Math.abs(l.x - w.x) > 620) l.x = w.x + Math.sign(l.x - w.x) * 520;
+  KO.lx0 = l.x;
+  w.face = l.x > w.x ? 1 : -1; l.face = -w.face;
 }
 function koUpdate(dt) {
   KO.t += dt; stepParticles(dt);
   for (const t of texts) { t.life -= dt; t.y -= 40 * dt; } texts = texts.filter(t => t.life > 0);
   shake = Math.max(0, shake - dt * 30);
-  const w = KO.winner, l = KO.loser, u = KO.t / KO.dur, el = KO.el, dir = Math.sign(l.x - w.x) || 1;
-  // winner: wind-up, then the finishing cast pose
-  w.castType = ({ fire: 'burst', water: 'wave', ice: 'projectile', lightning: 'strike', earth: 'wave', wind: 'orbit', light: 'strike', darkness: 'summon', antimatter: 'beam', steel: 'dash' })[el] || 'burst';
-  w.castUlt = true; w.castDur = 0.5; w.castAnim = u > 0.22 && u < 0.6 ? 0.25 : 0;
-  l.stun = u > 0.3 ? 1 : 0; l.hitDir = dir;
-  if (!KO.hit && u > 0.32) { KO.hit = true; shake = 18; impactFrame(l.x, chestY(l), el, true, 'radial', dir, true); burstParticles(l.x, chestY(l), el, 40, 520); }
-  const after = Math.max(0, (u - 0.32) / 0.68);
-  if (KO.hit) {
-    if (el === 'fire' || el === 'earth') { // launched by a pillar / spikes, tumbling
-      if (!KO.vy) KO.vy = el === 'earth' ? -1300 : -1100; KO.vy += 2300 * dt; l.y = Math.min(GROUND, l.y + KO.vy * dt); l.x += dir * 160 * dt; l.koRot += dir * 7 * dt * (l.y < GROUND ? 1 : 0);
-      if (el === 'fire' && Math.random() < 0.8) spawnP(KO.x0 + (Math.random() - 0.5) * 70, GROUND - Math.random() * 300 * (1 - after), 'fire', (Math.random() - 0.5) * 60, -200 - Math.random() * 300, 0.6, 4 + Math.random() * 5);
-    } else if (el === 'water') { // swept away by the wave
-      l.x = clamp(l.x + dir * 520 * dt * (1 - after * 0.6), 30, W - 30); l.y = GROUND - Math.sin(Math.min(1, after * 1.6) * Math.PI) * 120; l.koRot = dir * after * 1.4;
-    } else if (el === 'ice') { // frozen solid, then shattered
-      if (after > 0.45 && !KO.shattered) { KO.shattered = true; shake = 16; for (let k = 0; k < 40; k++) spawnP(l.x + (Math.random() - 0.5) * 50, l.y - Math.random() * 90, 'ice', (Math.random() - 0.5) * 700, -Math.random() * 600, 1.2, 4 + Math.random() * 5, 'rock'); }
-      if (KO.shattered) { l.koRot = Math.min(1.5, l.koRot + dir * 4 * dt); l.y = Math.min(GROUND, l.y + 400 * dt); }
-    } else if (el === 'lightning') { // struck again and again
-      if (KO.bolts.length < 4 && after > KO.bolts.length * 0.12) { KO.bolts.push({ t: 0.18, seed: Math.random() * 100 }); shake = 14; burstParticles(l.x, chestY(l), 'lightning', 18, 400); }
-      l.koRot = after > 0.6 ? Math.min(1.5, (after - 0.6) * 6) * dir : 0;
-    } else if (el === 'wind') { // lifted into a tornado and flung away
-      l.y = KO.y0 - after * after * 700; l.x = KO.x0 + Math.sin(after * 18) * 50 * (1 - after); l.koRot += 14 * dt;
-    } else if (el === 'light') { // dissolved into the light and lifted up
-      l.y = KO.y0 - after * 160; l.koAlpha = Math.max(0, 1 - after * 1.2);
-      if (Math.random() < 0.6) spawnP(l.x + (Math.random() - 0.5) * 40, l.y - Math.random() * 90, 'light', (Math.random() - 0.5) * 40, -80 - Math.random() * 120, 0.8, 3, 'glint');
-    } else if (el === 'darkness') { // pulled into a black hole
-      l.koScale = Math.max(0, 1 - after * 1.15); l.koRot += (2 + after * 18) * dt; l.y = KO.y0 - after * 40;
-    } else if (el === 'antimatter') { // erased from existence
-      l.koAlpha = Math.max(0, 1 - after * 1.4); if (Math.random() < 0.9) spawnP(l.x + (Math.random() - 0.5) * 40, l.y - Math.random() * 90, 'antimatter', (Math.random() - 0.5) * 300, (Math.random() - 0.5) * 300, 0.6, 3 + Math.random() * 4, 'glitch');
-    } else if (el === 'steel') { // cut down by a flurry of slashes
-      if (KO.bolts.length < 5 && after > KO.bolts.length * 0.08) { KO.bolts.push({ t: 0.16, seed: Math.random() * 100, a: (Math.random() - 0.5) * 1.6 }); shake = 10; spillBlood(l.x, chestY(l), dir, 1); }
-      l.koRot = after > 0.5 ? Math.min(1.5, (after - 0.5) * 5) * dir : 0;
-    }
+  const w = KO.winner, l = KO.loser, u = KO.t / KO.dur, dir = Math.sign(KO.lx0 - KO.wx0) || 1;
+  w.castUlt = true; w.castDur = 0.5;
+  if (!KO.hit && u > KO.hitAt) { KO.hit = true; impactFrame(l.x, chestY(l), KO.el, true, 'radial', dir, true); }
+  if (u < KO.hitAt) { l.stun = u > KO.hitAt * 0.7 ? 1 : 0; l.hitDir = dir; } // braces as it comes
+  KO.spec.update(KO, w, l, u, dt, dir);
+  if (KO.t >= KO.dur) {
+    for (const f of fighters) { f.koInk = null; f.koHead = null; f.koHide = false; f.koClipY = null; f.koRot = 0; f.koScale = 1; f.koAlpha = 1; f.koFreeze = false; f.stun = 0; f.castAnim = 0; f.y = GROUND; }
+    state = 'results'; showResults();
   }
-  for (const b of KO.bolts) b.t -= dt;
-  if (KO.t >= KO.dur) { state = 'results'; l.koRot = 0; l.koScale = 1; l.koAlpha = 1; l.stun = 0; w.castAnim = 0; showResults(); }
 }
 function drawKOWorld(front) {
-  const w = KO.winner, l = KO.loser; if (!w || !l) return;
-  const u = KO.t / KO.dur, after = Math.max(0, (u - 0.32) / 0.68), el = KO.el, col = elCol(el), dir = Math.sign(l.x - w.x) || 1;
-  ctx.save();
-  if (!front) {
-    // charging aura around the winner before the hit
-    if (u < 0.4) { const g = ctx.createRadialGradient(w.x, w.y - 40, 5, w.x, w.y - 40, 90 + u * 120); g.addColorStop(0, withA(col, 0.55)); g.addColorStop(1, withA(col, 0)); ctx.fillStyle = g; ctx.fillRect(w.x - 220, w.y - 260, 440, 300); }
-    if (el === 'fire' && KO.hit) { const h = 420 * Math.min(1, after * 3) * (1 - Math.max(0, after - 0.7) * 3); const g = ctx.createLinearGradient(0, GROUND - h, 0, GROUND); g.addColorStop(0, withA(EL2.fire, 0)); g.addColorStop(0.3, withA(col, 0.8)); g.addColorStop(1, withA(EL2.fire, 0.95)); glowOn(); ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(KO.x0 - 50, GROUND); ctx.quadraticCurveTo(KO.x0 - 20, GROUND - h * 0.6, KO.x0 + Math.sin(clock * 20) * 12, GROUND - h); ctx.quadraticCurveTo(KO.x0 + 20, GROUND - h * 0.6, KO.x0 + 50, GROUND); ctx.fill(); glowOff(); }
-    if (el === 'earth' && KO.hit) { ctx.fillStyle = col; ctx.strokeStyle = C.ink; ctx.lineWidth = 3; for (let k = -3; k <= 3; k++) { const hgt = Math.min(1, after * 4) * (140 - Math.abs(k) * 28) * (1 - Math.max(0, after - 0.75) * 4), x = KO.x0 + k * 26; ctx.beginPath(); ctx.moveTo(x - 16, GROUND); ctx.lineTo(x + (hash(k + KO.seed) - 0.5) * 10, GROUND - hgt); ctx.lineTo(x + 16, GROUND); ctx.closePath(); ctx.fill(); ctx.stroke(); } }
-    if (el === 'water' && KO.hit) { const wx = w.x + dir * after * 1100, hh = 170 * Math.sin(Math.min(1, after * 1.3) * Math.PI); ctx.fillStyle = withA(col, 0.75); ctx.beginPath(); ctx.moveTo(wx - dir * 500, GROUND); for (let k = 0; k <= 20; k++) { const x = wx - dir * 500 + dir * k * 25; ctx.lineTo(x, GROUND - hh * Math.sin(k / 20 * Math.PI) - Math.sin(clock * 9 + k) * 6); } ctx.lineTo(wx, GROUND); ctx.closePath(); ctx.fill(); }
-    if (el === 'wind' && KO.hit) { ctx.strokeStyle = withA(col, 0.8); ctx.lineWidth = 3; for (let k = 0; k < 14; k++) { const y = GROUND - k * 34, r = 20 + k * 9; ctx.beginPath(); ctx.ellipse(KO.x0 + Math.sin(clock * 6 + k) * 10, y, r, r * 0.25, 0, clock * 8 + k, clock * 8 + k + 4.4); ctx.stroke(); } }
-    if (el === 'light' && KO.hit) { const wd = 60 + Math.sin(clock * 30) * 6; glowOn(); const g = ctx.createLinearGradient(KO.x0 - wd, 0, KO.x0 + wd, 0); g.addColorStop(0, withA(EL2.light, 0)); g.addColorStop(0.5, withA(EL2.light, 0.95 * (1 - Math.max(0, after - 0.8) * 5))); g.addColorStop(1, withA(EL2.light, 0)); ctx.fillStyle = g; ctx.fillRect(KO.x0 - wd, 0, wd * 2, GROUND); glowOff(); }
-    if (el === 'darkness' && KO.hit) { const r = 30 + Math.min(1, after * 2) * 90 * (1 - Math.max(0, after - 0.85) * 6); const cx = KO.x0, cy = KO.y0 - 60; ctx.fillStyle = '#05010c'; ctx.beginPath(); ctx.arc(cx, cy, Math.max(0, r), 0, 7); ctx.fill(); ctx.strokeStyle = col; ctx.lineWidth = 3; for (let k = 0; k < 4; k++) { ctx.beginPath(); ctx.ellipse(cx, cy, r + 14 + k * 10, (r + 14 + k * 10) * 0.35, clock * (1 + k * 0.4), 0, 7); ctx.stroke(); } }
-  } else {
-    if (el === 'ice' && KO.hit && !KO.shattered) { const k = Math.min(1, after * 5); ctx.fillStyle = withA(col, 0.45 * k); ctx.strokeStyle = withA('#ffffff', 0.9 * k); ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(l.x - 34, l.y); ctx.lineTo(l.x - 40, l.y - 70); ctx.lineTo(l.x - 18, l.y - 104); ctx.lineTo(l.x + 22, l.y - 98); ctx.lineTo(l.x + 38, l.y - 60); ctx.lineTo(l.x + 32, l.y); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.beginPath(); ctx.moveTo(l.x - 20, l.y - 80); ctx.lineTo(l.x - 6, l.y - 40); ctx.stroke(); }
-    if (el === 'lightning') for (const b of KO.bolts) if (b.t > 0) { glowOn(); ctx.strokeStyle = EL2.lightning; ctx.lineWidth = 6 * b.t / 0.18 + 2; ctx.beginPath(); let x = l.x + (hash(b.seed) - 0.5) * 60, y = 0; ctx.moveTo(x, y); while (y < l.y - 40) { y += 40; x += (hash(b.seed + y) - 0.5) * 60; ctx.lineTo(x, y); } ctx.lineTo(l.x, chestY(l)); ctx.stroke(); glowOff(); }
-    if (el === 'steel') for (const b of KO.bolts) if (b.t > 0) { ctx.save(); ctx.translate(l.x, chestY(l)); ctx.rotate(b.a); ctx.globalAlpha = b.t / 0.16; ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.moveTo(-160, -2); ctx.quadraticCurveTo(0, -14, 160, -2); ctx.quadraticCurveTo(0, 8, -160, 2); ctx.closePath(); ctx.fill(); ctx.restore(); }
+  if (!KO.winner || !KO.spec) return;
+  const u = KO.t / KO.dur, dir = Math.sign(KO.lx0 - KO.wx0) || 1, fn = front ? KO.spec.front : KO.spec.back;
+  if (!front && u < KO.hitAt) { // shared wind-up: the winner's element gathers around them
+    const w = KO.winner, k = seg01(u, 0, KO.hitAt), g = ctx.createRadialGradient(w.x, w.y - 45, 4, w.x, w.y - 45, 70 + k * 90);
+    g.addColorStop(0, withA(elCol(KO.el), 0.5 * k)); g.addColorStop(1, withA(elCol(KO.el), 0)); ctx.fillStyle = g; ctx.fillRect(w.x - 200, w.y - 240, 400, 280);
   }
-  ctx.restore();
+  if (fn) { ctx.save(); fn(KO, KO.winner, KO.loser, u, dir); ctx.restore(); }
 }
 function drawKOScreen() {
-  const u = KO.t / KO.dur; if (!KO.winner) return;
+  if (!KO.winner || !KO.spec) return;
+  const u = KO.t / KO.dur;
+  ctx.save(); if (KO.spec.screen) KO.spec.screen(KO, u); ctx.restore();
   ctx.save();
-  if (KO.el === 'lightning' && KO.bolts.some(b => b.t > 0.12)) { ctx.fillStyle = 'rgba(255,255,240,0.35)'; ctx.fillRect(0, 0, W, H); }
-  if (KO.el === 'light' && KO.hit) { ctx.fillStyle = `rgba(255,252,235,${0.35 * Math.max(0, 1 - (u - 0.32) * 2)})`; ctx.fillRect(0, 0, W, H); }
-  // cinematic bars
-  const bar = Math.min(1, u * 5) * 58; ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar);
-  if (u > 0.55) {
-    const k = Math.min(1, (u - 0.55) / 0.12), sc = 1 + (1 - k) * 1.6;
-    ctx.translate(W / 2, H / 2 - 30); ctx.scale(sc, sc); ctx.rotate(-0.06 * (1 - k)); ctx.globalAlpha = k;
-    ctx.textAlign = 'center'; ctx.font = '400 150px Anton, Impact, sans-serif';
-    ctx.lineWidth = 14; ctx.lineJoin = 'round'; ctx.strokeStyle = '#000'; ctx.strokeText('K.O.', 0, 0);
-    ctx.fillStyle = elCol(KO.el); ctx.fillText('K.O.', 0, 0);
-    ctx.font = '400 30px Anton, Impact, sans-serif'; ctx.lineWidth = 6; const wl = sideLabel(KO.winner.slot), sub = `${wl} ${wl === 'You' ? 'win' : 'wins'} with ${elName(KO.el)}`;
-    ctx.strokeText(sub, 0, 56); ctx.fillStyle = '#fff'; ctx.fillText(sub, 0, 56);
+  const bar = ease.out(seg01(u, 0, 0.15)) * 58; ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar);
+  const titleAt = 0.68;
+  if (u > titleAt) {
+    const k = ease.out(seg01(u, titleAt, titleAt + 0.08)), col = elCol(KO.el), word = KO.spec.word;
+    ctx.translate(W / 2, H / 2 - 20);
+    ctx.textAlign = 'center'; ctx.lineJoin = 'round';
+    ctx.globalAlpha = k; ctx.font = '400 40px Anton, Impact, sans-serif'; ctx.lineWidth = 8; ctx.strokeStyle = '#000'; ctx.strokeText('K.O.', 0, -78); ctx.fillStyle = '#fff'; ctx.fillText('K.O.', 0, -78);
+    const sc = 1 + (1 - k) * 0.8, size = word.length > 10 ? 96 : 120;
+    ctx.save(); ctx.scale(sc, sc);
+    let jx = 0; if (KO.el === 'antimatter') jx = (hash(Math.floor(clock * 16)) - 0.5) * 10 * (1 - seg01(u, 0.8, 0.95));
+    if (KO.el === 'steel') { ctx.beginPath(); ctx.rect(-W, -200, W * 2 * k, 400); ctx.clip(); } // wiped in like a blade
+    ctx.font = `400 ${size}px Anton, Impact, sans-serif`; ctx.lineWidth = 14; ctx.strokeStyle = '#000'; ctx.strokeText(word, jx, 20);
+    if (KO.el === 'antimatter') { ctx.fillStyle = '#ff2bd6'; ctx.fillText(word, jx - 4, 20); ctx.fillStyle = '#2bf0ff'; ctx.fillText(word, jx + 4, 20); }
+    ctx.fillStyle = col; ctx.fillText(word, jx, 20); ctx.restore();
+    const wl = sideLabel(KO.winner.slot), sub = `${wl} ${wl === 'You' ? 'win' : 'wins'} with ${elName(KO.el)}`;
+    ctx.font = '400 28px Anton, Impact, sans-serif'; ctx.lineWidth = 6; ctx.strokeText(sub, 0, 76); ctx.fillStyle = '#fff'; ctx.fillText(sub, 0, 76);
   }
   ctx.restore();
 }
+
 function afterRound() {
   if (round === 0) { round = 1; state = 'half'; plan.forEach(p => { p.status = null; }); if (opts.mode === 'bot') plan[1] = botPlan(plan[1].element, plan[0]); showPrep(); }
   else startKO();
