@@ -1523,7 +1523,7 @@ function impactFrame(x, y, el, strong, style = 'radial', dir = 1, ult = false) {
   // body hits: 3 keyframes; head hits: 5; ultimates: 7. The palette order is shuffled per hit.
   const frames = ult ? 7 : strong ? 5 : 3, start = Math.floor(Math.random() * n), step = Math.random() < 0.5 ? 1 : n - 1;
   const order = Array.from({ length: frames }, (_, k) => (start + k * step) % n);
-  IMPACT.max = IMPACT.t = frames * IMP_FRAME;
+  IMPACT.max = IMPACT.t = frames * IMP_FRAME; IMPACT.start = performance.now();
   Object.assign(IMPACT, { x, y, el, strong, style, dir: dir || 1, ult, seed: Math.random() * 1000, order, mirror: Math.random() < 0.5 ? -1 : 1, rot: (Math.random() - 0.5) * 0.5 });
 }
 // what each element's texture looks like
@@ -1975,7 +1975,10 @@ function drawImpactPattern(style, sx, sy, dir, ink, negative, u) {
 }
 function drawImpactFrame() {
   if (IMPACT.t <= 0) return;
-  IMPACT.t = Math.max(0, IMPACT.t - frameDt);
+  // timed by the wall clock, not the game's frame step, so it always ends (Safari's frame timing once left it stuck on screen)
+  const age = (performance.now() - (IMPACT.start || 0)) / 1000;
+  if (!(age >= 0) || age >= IMPACT.max) { IMPACT.t = 0; return; }
+  IMPACT.t = IMPACT.max - age;
   const el = IMPACT.el, pal = IMP_PAL[el] || IMP_PAL.fire;
   const elapsed = IMPACT.max - IMPACT.t, fi = Math.min(IMPACT.order.length - 1, Math.floor(elapsed / IMP_FRAME));
   const P = pal[IMPACT.order[fi]], u = clamp(elapsed / IMPACT.max, 0, 1);
@@ -2009,8 +2012,8 @@ function drawDarkness() {
   // in a move preview, show what the dummy would see so you can judge the effect
   const me = PV.on ? fighters[1] : fighters.find(f => isMine(f));
   const on = me && me.blind > 0 && (PV.on || fighting() || state === 'timeup');
-  const D = drawDarkness;
-  D.a = (D.a || 0) + ((on ? 1 : 0) - (D.a || 0)) * Math.min(1, frameDt * (on ? 14 : 3.5));
+  const D = drawDarkness, nowMs = performance.now(), rdt = clamp((nowMs - (D.lastMs || nowMs)) / 1000, 0, 0.05); D.lastMs = nowMs;
+  D.a = (D.a || 0) + ((on ? 1 : 0) - (D.a || 0)) * Math.min(1, rdt * (on ? 14 : 3.5));
   if (on) { if (!D.was) D.t0 = clock; D.el = me.blindEl || D.el || 'light'; }
   D.was = on;
   const a = D.a; if (a < 0.02 || !me) return;
