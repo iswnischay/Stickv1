@@ -1819,7 +1819,7 @@ function drawTexts() {
 }
 
 function roundRect(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
-function slotLabel(f, i) { if (f.isBot) return '·'; if (TOUCH.on && isMine(f)) return ['↑', '→', '↓', '←', '2× tap'][i]; const sc = schemeFor(f.slot); return sc ? keyShort(binds[sc]['m' + (i + 1)][0]) : '·'; }
+function slotLabel(f, i) { if (f.isBot) return '·'; if (TOUCH.on && isMine(f)) return ['← tap', '↑', '→', '↓', '★'][i]; const sc = schemeFor(f.slot); return sc ? keyShort(binds[sc]['m' + (i + 1)][0]) : '·'; }
 
 function drawHUD() {
   if (!fighters.length) return;
@@ -3737,7 +3737,7 @@ screenEl.addEventListener('click', e => {
 });
 
 function updateLegend() {
-  if (typeof TOUCH !== 'undefined' && TOUCH.on) { legendEl.innerHTML = 'Left thumb: slide to move &nbsp;|&nbsp; Right thumb: swipe ↑ → ↓ ← on the pad for moves, JUMP and DODGE below, double-tap the glowing pad for your ultimate'; return; }
+  if (typeof TOUCH !== 'undefined' && TOUCH.on) { legendEl.innerHTML = 'Left thumb: slide to move, flick up to jump, double-tap to dodge &nbsp;|&nbsp; Right thumb: tap, swipe or hold for moves'; return; }
   const s = sc => { const b = binds[sc], k = a => `<kbd>${esc(keyShort(b[a][0]))}</kbd>`; return `${k('left')}${k('right')} move · ${k('jump')} jump · ${k('drop')} drop · ${['m1', 'm2', 'm3', 'm4'].map(k).join('')} moves · ${b.dodge ? k('dodge') + ' dodge · ' : ''}${k('m5')} ultimate`; };
   legendEl.innerHTML = opts.mode !== 'pvp'
     ? `You: ${opts.aim === 'mouse' ? 'aim with the mouse · ' : ''}${s(soloScheme())} &nbsp;|&nbsp; controller works too &nbsp;|&nbsp; <kbd>Esc</kbd> pause`
@@ -4122,10 +4122,10 @@ function prepPreviewHTML() {
 }
 
 /* ---------- touch controls (phones and tablets) ----------
-   Left thumb: an invisible joystick that appears where you touch (slide to move, pull down to drop).
-   Right thumb: a faint swipe pad with Jump and Dodge buttons under it. Swipe up / right / down / left for
-   moves 1-4 (each arrow glows when that move is ready), hold to open the move wheel, and when the ultimate
-   is charged the whole pad glows: double-tap it.
+   Nothing sits on screen permanently. Left thumb: an invisible joystick that appears where you touch
+   (slide to move, flick up to jump, pull down to drop, double-tap to dodge). Right thumb: tap for move 1,
+   swipe left/up/right/down for moves 1-4, or press and hold to open a move wheel and slide to pick.
+   The ultimate fades in as a glowing button when it's charged (or two-finger tap the right side).
    Easy mode (default): a tap casts whichever ready move suits the moment best.
    Everything here only runs on touch devices; keyboard, mouse and controller are untouched. */
 const TOUCH = (() => {
@@ -4141,18 +4141,17 @@ addEventListener('touchstart', setTouchOn, { passive: true, capture: true });
 const tui = document.createElement('div'); tui.id = 'touch-ui';
 tui.innerHTML = `<div class="t-ring" hidden><div class="t-knob"></div></div>
   <div class="t-wheel" hidden>${[0, 1, 2, 3].map(i => `<div class="t-item" data-i="${i}"><b></b><small></small></div>`).join('')}<div class="t-hub"></div></div>
-  <div class="t-pad"><div class="t-arrow" data-i="0">↑</div><div class="t-arrow" data-i="1">→</div><div class="t-arrow" data-i="2">↓</div><div class="t-arrow" data-i="3">←</div><div class="t-padlabel">2× tap</div></div>
-  <button class="t-btn t-jump">JUMP</button><button class="t-btn t-dodge">DODGE</button>
+  <button class="t-btn t-ult" hidden>ULT</button>
   <button class="t-btn t-pause" aria-label="Pause">II</button>
   <div class="t-pausemenu" hidden><button class="t-btn" data-t="resume">Resume</button><button class="t-btn" data-t="quit">Quit match</button></div>
   <div class="t-tut" hidden><h3>Phone controls</h3>
-    <p><b>Left thumb</b> &nbsp;slide to move · pull down to drop</p>
-    <p><b>Right thumb</b> &nbsp;swipe ↑ → ↓ ← on the pad for moves 1-4 (an arrow glows when its move is ready) · tap for a quick attack · hold to open the move wheel · JUMP and DODGE buttons below</p>
-    <p><b>Ultimate</b> &nbsp;the pad glows when it's charged: double-tap it</p>
+    <p><b>Left thumb</b> &nbsp;slide to move · flick up to jump · pull down to drop · double-tap to dodge</p>
+    <p><b>Right thumb</b> &nbsp;tap to attack · swipe ← ↑ → ↓ for moves 1-4 · hold to open the move wheel</p>
+    <p><b>Ultimate</b> &nbsp;a glowing button appears when it's charged</p>
     <button class="t-btn" data-t="tut-ok">Got it</button></div>`;
 document.body.appendChild(tui);
 const $t = s => tui.querySelector(s);
-const tRing = $t('.t-ring'), tKnob = $t('.t-knob'), tWheel = $t('.t-wheel'), tPad = $t('.t-pad'), tJump = $t('.t-jump'), tDodge = $t('.t-dodge'), tPause = $t('.t-pause'), tPauseMenu = $t('.t-pausemenu'), tTut = $t('.t-tut');
+const tRing = $t('.t-ring'), tKnob = $t('.t-knob'), tWheel = $t('.t-wheel'), tUlt = $t('.t-ult'), tPause = $t('.t-pause'), tPauseMenu = $t('.t-pausemenu'), tTut = $t('.t-tut');
 
 const touchFighter = () => fighters.find(f => isMine(f)) || null;
 const touchActive = () => TOUCH.on && (fighting() || state === 'timeup') && !PV.on && screenEl.hidden && opts.mode !== 'pvp';
@@ -4161,8 +4160,9 @@ function ripple(x, y, big) {
   const r = document.createElement('div'); r.className = 't-ripple' + (big ? ' big' : ''); r.style.left = x + 'px'; r.style.top = y + 'px';
   tui.appendChild(r); setTimeout(() => r.remove(), 450);
 }
-// direction of a swipe -> move slot: up = 1, right = 2, down = 3, left = 4
-const swipeSlot = (dx, dy) => Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : (dy < 0 ? 0 : 2);
+// direction of a swipe -> move slot: left = 1, up = 2, right = 3, down = 4
+const swipeSlot = (dx, dy) => Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 0 : 2) : (dy < 0 ? 1 : 3);
+const WHEEL_POS = [[-1, 0], [0, -1], [1, 0], [0, 1]];
 // Easy mode: pick the move that fits the situation, using the same judgement as the bot.
 function autoPick(f) {
   const o = opp(f); if (!o) return 0;
@@ -4203,7 +4203,7 @@ function openWheel(R) {
   tWheel.querySelectorAll('.t-item').forEach(el => {
     const i = Number(el.dataset.i), m = f.moves[i];
     el.querySelector('b').textContent = m ? m.name : '—';
-    el.querySelector('small').textContent = !m ? '' : f.cds[i] > 0 ? f.cds[i].toFixed(1) + 's' : f.mana < m.mana_cost ? 'no mana' : ['↑', '→', '↓', '←'][i];
+    el.querySelector('small').textContent = !m ? '' : f.cds[i] > 0 ? f.cds[i].toFixed(1) + 's' : f.mana < m.mana_cost ? 'no mana' : ['←', '↑', '→', '↓'][i];
     el.classList.toggle('off', !m || !canCast(f, i)); el.classList.remove('sel');
     el.style.setProperty('--c', `var(--el-${f.element})`);
   });
@@ -4221,6 +4221,8 @@ function onTouchStart(e) {
     const x = t.clientX, y = t.clientY;
     if (!isRightSide(x)) {
       if (TOUCH.L) continue;
+      const lt = TOUCH.lastLeftTap;
+      if (lt && now - lt.t < 300 && Math.hypot(x - lt.x, y - lt.y) < 70) { TOUCH.ev.dodge++; ripple(x, y, true); TOUCH.lastLeftTap = null; }
       TOUCH.L = { id: t.identifier, ox: x, oy: y, x, y, anchorY: y, t: now };
       tRing.style.left = x + 'px'; tRing.style.top = y + 'px'; tKnob.style.transform = 'translate(-50%,-50%)'; tRing.hidden = false;
     } else {
@@ -4243,6 +4245,7 @@ function onTouchMove(e) {
       L.x = t.clientX; L.y = t.clientY;
       // floating stick: if the thumb wanders far, the centre follows it
       const dx = L.x - L.ox, lim = 64; if (Math.abs(dx) > lim) L.ox += dx - Math.sign(dx) * lim;
+      if (L.y < L.anchorY - 34) { TOUCH.ev.jump++; L.anchorY = L.y; } else if (L.y > L.anchorY + 16) L.anchorY = L.y;
       const kx = clamp(L.x - L.ox, -lim, lim), ky = clamp(L.y - L.oy, -lim, lim);
       tRing.style.left = L.ox + 'px'; tKnob.style.transform = `translate(calc(-50% + ${kx}px), calc(-50% + ${ky}px))`;
       continue;
@@ -4262,6 +4265,7 @@ function onTouchEnd(e) {
   for (const t of e.changedTouches) {
     const L = TOUCH.L;
     if (L && t.identifier === L.id) {
+      if (now - L.t < 200 && Math.hypot(L.x - L.ox, L.y - L.oy) < 16) TOUCH.lastLeftTap = { t: now, x: L.x, y: L.y };
       TOUCH.L = null; tRing.hidden = true; continue;
     }
     const k = TOUCH.R.findIndex(r => r.id === t.identifier); if (k < 0) continue;
@@ -4271,13 +4275,7 @@ function onTouchEnd(e) {
     if (R.done) continue;
     const dx = R.x - R.x0, dy = R.y - R.y0, d = Math.hypot(dx, dy), dt = now - R.t0;
     if (d > 40 && dt < 400) { castTouch(swipeSlot(dx, dy)); ripple(R.x, R.y); }
-    else if (d < 26) {
-      const f = touchFighter(), ultReady = f && f.moves[4] && f.ult >= ULT_MAX, quick = () => castTouch(TOUCH.easy && f ? autoPick(f) : 0);
-      if (ultReady) {
-        if (TOUCH.pendTap && now - TOUCH.pendTap.t < 300) { clearTimeout(TOUCH.pendTap.timer); TOUCH.pendTap = null; castTouch(4); ripple(R.x0, R.y0, true); }
-        else { const pt = { t: now }; pt.timer = setTimeout(() => { if (TOUCH.pendTap === pt) { TOUCH.pendTap = null; quick(); } }, 230); TOUCH.pendTap = pt; ripple(R.x0, R.y0); }
-      } else { quick(); ripple(R.x0, R.y0); }
-    }
+    else if (d < 26) { const f = touchFighter(); castTouch(TOUCH.easy && f ? autoPick(f) : 0); ripple(R.x0, R.y0); }
   }
 }
 addEventListener('touchstart', onTouchStart, { passive: false });
@@ -4287,10 +4285,7 @@ addEventListener('touchcancel', onTouchEnd, { passive: false });
 
 // buttons in the overlay
 const tapBtn = (el, fn) => { el.addEventListener('touchstart', e => { e.preventDefault(); e.stopPropagation(); fn(); }, { passive: false }); el.addEventListener('click', fn); };
-tJump.addEventListener('touchstart', e => { e.preventDefault(); e.stopPropagation(); TOUCH.ev.jump++; TOUCH.jumpHeld = true; tJump.classList.add('down'); }, { passive: false });
-const jumpUp = e => { if (e) e.preventDefault(); TOUCH.jumpHeld = false; tJump.classList.remove('down'); };
-tJump.addEventListener('touchend', jumpUp, { passive: false }); tJump.addEventListener('touchcancel', jumpUp, { passive: false });
-tDodge.addEventListener('touchstart', e => { e.preventDefault(); e.stopPropagation(); TOUCH.ev.dodge++; tDodge.classList.add('down'); setTimeout(() => tDodge.classList.remove('down'), 140); }, { passive: false });
+tapBtn(tUlt, () => { castTouch(4); ripple(tUlt.getBoundingClientRect().left + 30, tUlt.getBoundingClientRect().top + 30, true); });
 tapBtn(tPause, () => { if (opts.mode === 'online') return; togglePause(); });
 tui.querySelectorAll('[data-t]').forEach(b => tapBtn(b, () => {
   const a = b.dataset.t;
@@ -4304,8 +4299,7 @@ function readTouch() {
   const out = { ax: 0, jumpHeld: false, drop: false, wantJump: false, dodge: false, casts: [] };
   if (!TOUCH.on) return out;
   const L = TOUCH.L;
-  if (L) { const dx = L.x - L.ox, dy = L.y - L.oy; out.ax = Math.abs(dx) > 16 ? Math.sign(dx) : 0; out.drop = dy > 46; }
-  if (TOUCH.jumpHeld) out.jumpHeld = true;
+  if (L) { const dx = L.x - L.ox, dy = L.y - L.oy; out.ax = Math.abs(dx) > 16 ? Math.sign(dx) : 0; out.jumpHeld = -dy > 18; out.drop = dy > 46; }
   if (TOUCH.ev.jump) { out.wantJump = true; out.jumpHeld = true; TOUCH.ev.jump = 0; }
   if (TOUCH.ev.dodge) { out.dodge = true; TOUCH.ev.dodge = 0; }
   if (TOUCH.ev.casts.length) { out.casts = TOUCH.ev.casts.splice(0); }
@@ -4317,14 +4311,9 @@ function touchFrame() {
   const inFight = TOUCH.on && (fighting() || state === 'timeup' || state === 'ko') && !PV.on && screenEl.hidden;
   if (inFight !== lastInFight) { lastInFight = inFight; document.body.classList.toggle('in-fight', inFight); resize(); if (!inFight) { TOUCH.L = null; TOUCH.R = []; tRing.hidden = true; closeWheel(); } }
   if (!TOUCH.on) return;
-  const f = touchFighter(), ultReady = !!(inFight && state === 'fight' && f && f.moves[4] && f.ult >= ULT_MAX);
-  if (f && inFight) {
-    tPad.style.setProperty('--c', `var(--el-${f.element})`); tPad.classList.toggle('ult', ultReady); tPad.classList.toggle('wheel-open', !tWheel.hidden);
-    tPad.querySelectorAll('.t-arrow').forEach(a => { const i = Number(a.dataset.i), m = f.moves[i], ready = !!m && canCast(f, i); a.classList.toggle('ready', ready);
-      a.style.setProperty('--p', m && !m.ult && m.cooldown ? String(1 - clamp(f.cds[i] / m.cooldown, 0, 1)) : '1'); });
-  }
-  if (!TOUCH.jumpHeld) tJump.classList.remove('down');
-  document.body.classList.toggle('lefty', TOUCH.lefty);
+  const f = touchFighter(), ultReady = inFight && state === 'fight' && f && f.moves[4] && f.ult >= ULT_MAX;
+  tUlt.hidden = !ultReady || !tWheel.hidden; tui.classList.toggle('ult-ready', !!ultReady);
+  if (ultReady) tUlt.style.setProperty('--c', `var(--el-${f.element})`);
   tPause.hidden = !inFight || opts.mode === 'online' || state === 'ko';
   tPauseMenu.hidden = !(inFight && paused && !TOUCH.tutPaused);
   // first fight on a phone: a short guide (pauses the countdown when that's allowed)

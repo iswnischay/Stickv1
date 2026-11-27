@@ -89,11 +89,11 @@ npm run dist:mac    # on a Mac
 
 Open the site and install it: Android Chrome shows **Install app**; on iPhone use Share → **Add to Home Screen**. It runs full screen and Practice / Vs Bot work offline. Updates arrive automatically.
 
-Touch controls:
-- **Left thumb:** an invisible stick that appears where you touch. Slide to move, pull down to drop.
-- **Right thumb:** a faint swipe pad with **JUMP** and **DODGE** under it. Swipe ↑ → ↓ ← for moves 1–4; each arrow glows when its move is ready and fills up while it cools down. Hold on the pad for the move wheel. Tap for a quick attack (Easy mode picks the best ready move).
-- **Ultimate:** the whole pad glows when it's charged. Double-tap it.
-- Settings → Touch controls: Easy mode, left-handed (swaps the sides), vibration.
+Touch controls appear only where your thumbs are:
+- **Left thumb:** slide to move, flick up to jump (again in the air to double jump), pull down to drop, double-tap to dodge.
+- **Right thumb:** tap to attack, swipe ← ↑ → ↓ for moves 1–4, or press and hold to open the move wheel and slide to pick. The move cards at the bottom can be tapped too.
+- **Ultimate:** a glowing button fades in when it's charged (or two-finger tap the right side).
+- **Easy mode** (on by default): a tap casts the best ready move for the moment. Turn it off, switch to left-handed, or turn vibration off in Settings.
 
 ## Controls
 
