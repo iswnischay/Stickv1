@@ -404,9 +404,9 @@ function readLocalInput(sc, padIndex) {
 
 /* ---------- helpers ---------- */
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-function addText(x, y, text, col, size = 26, el) {
+function addText(x, y, text, col, size = 26, el, fx) {
   texts.push({ x, y, text, col, size, life: 0.9 });
-  if (NET.on && NET.role === 'host') { NET.events.push([++NET.evId, Math.round(x), Math.round(y), text, col, size, el || '']); if (NET.events.length > 10) NET.events.shift(); }
+  if (NET.on && NET.role === 'host') { NET.events.push([++NET.evId, Math.round(x), Math.round(y), text, col, size, el || '', fx || 0]); if (NET.events.length > 10) NET.events.shift(); }
 }
 function headPos(f) { return { x: f.x, y: f.y - 68 }; }
 function chestY(f) { return f.y - 40; }
@@ -462,9 +462,10 @@ function registerHit(att, tgt, idx, isHead, m, srcX) {
   hitstop = isHead ? 0.09 : 0.05; cam.punch = Math.max(cam.punch, isHead ? 0.04 : 0.015);
   shake = isHead ? 10 : 5;
   const hp = isHead ? headPos(tgt) : { x: tgt.x, y: chestY(tgt) };
-  addText(hp.x, hp.y - 26, isHead ? `+${pts} head!` : `+${pts}`, isHead ? C.red : C.ink, isHead ? 32 : 24, att.element);
+  const fxCode = (TYPE_IDS.indexOf(m.type) + 1) + (effOf(m, 'blind') ? 100 : 0) + (m.ult ? 1000 : 0) + (Math.sign(tgt.x - srcX) < 0 ? 10000 : 0);
+  addText(hp.x, hp.y - 26, isHead ? `+${pts} head!` : `+${pts}`, isHead ? C.red : C.ink, isHead ? 32 : 24, att.element, fxCode);
   burstParticles(hp.x, hp.y, att.element, isHead ? 22 : 12);
-  impactFx(hp.x, hp.y, att.element, isHead ? 1.4 : 1);
+  impactFx(hp.x, hp.y, att.element, isHead ? 1.4 : 1, fxCode, m.stats.damage);
   return true;
 }
 
@@ -491,7 +492,7 @@ function tryCast(f, i) {
     return false;
   }
   f.queued = null;
-  if (m.ult) { impactFrame(f.x, chestY(f), f.element, true); cam.focus = { x: f.x, t: 0.9 }; f.ult = 0; banner = 1.1; bannerText = m.name; shake = 14; hitstop = 0.12; slowmo = 0.45; cam.punch = 0.1; burstParticles(f.x, chestY(f), f.element, 40, 500); }
+  if (m.ult) { impactFrame(f.x, chestY(f), f.element, true, 'radial', f.face, true); cam.focus = { x: f.x, t: 0.9 }; f.ult = 0; banner = 1.1; bannerText = m.name; shake = 14; hitstop = 0.12; slowmo = 0.45; cam.punch = 0.1; burstParticles(f.x, chestY(f), f.element, 40, 500); }
   else { f.mana -= m.mana_cost; f.cds[i] = m.cooldown; }
   f.stats[i].casts++; f.castType = m.type; f.castUlt = !!m.ult; f.castAnim = f.castDur = CAST_DUR[m.type] || 0.28;
   const st = m.stats, o = opp(f), ang = f.aimAng, cy = chestY(f);
@@ -1075,6 +1076,13 @@ function stepParticles(dt) {
     else if (k === 'flame') { p.vy -= 160 * dt; p.vx *= 0.94; }
     else if (k === 'snow') { p.vx *= 0.9; p.vy = p.vy * 0.9 + 18 * dt * 10; }
     else if (k === 'smoke') { p.size += dt * 14; p.vx *= 0.95; p.vy *= 0.95; }
+    else if (k === 'bloodmist') { p.vx *= 0.9; p.vy *= 0.9; }
+    else if (k === 'blood') {
+      const py = p.y - p.vy * dt; p.vy += 1500 * dt; p.vx *= 0.99;
+      let land = p.y >= GROUND ? GROUND : 0;
+      if (!land && p.vy > 0) for (const q of PLATFORMS) if (py <= q.y && p.y >= q.y && p.x > q.x && p.x < q.x + q.w) { land = q.y; break; }
+      if (land) { addStain(p.x, land, p.size); p.life = 0; }
+    }
     else { p.vx *= 0.95; p.vy *= 0.95; }
   }
   particles = particles.filter(p => p.life > 0);
@@ -1087,6 +1095,8 @@ function drawParticles() {
       case 'flame': glowOn(); ctx.fillStyle = a > 0.6 ? EL2.fire : col; ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (0.5 + a), 0, 7); ctx.fill(); glowOff(); break;
       case 'drop': ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(p.x, p.y, p.size * 0.6, p.size, Math.atan2(p.vy, p.vx) + 1.57, 0, 7); ctx.fill(); break;
       case 'spark': glowOn(); ctx.strokeStyle = p.el === 'lightning' ? EL2.lightning : col; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x - p.vx * 0.03, p.y - p.vy * 0.03); ctx.stroke(); glowOff(); break;
+      case 'bloodmist': ctx.fillStyle = BLOOD[2]; ctx.globalAlpha *= 0.8; ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (1.6 - a * 0.6), 0, 7); ctx.fill(); break;
+      case 'blood': ctx.fillStyle = BLOOD[0]; ctx.beginPath(); ctx.ellipse(p.x, p.y, p.size * 0.7, p.size * (1 + Math.min(1.5, Math.hypot(p.vx, p.vy) / 500)), Math.atan2(p.vy, p.vx) + 1.57, 0, 7); ctx.fill(); break;
       case 'snow': ctx.strokeStyle = col; ctx.lineWidth = 1.2; ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot * 0.3); ctx.beginPath(); for (let k = 0; k < 3; k++) { const ang = k * Math.PI / 3; ctx.moveTo(-Math.cos(ang) * p.size, -Math.sin(ang) * p.size); ctx.lineTo(Math.cos(ang) * p.size, Math.sin(ang) * p.size); } ctx.stroke(); ctx.restore(); break;
       case 'rock': ctx.fillStyle = col; ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.8); ctx.restore(); break;
       case 'smoke': ctx.globalAlpha = a * 0.35; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, 7); ctx.fill(); break;
@@ -1474,16 +1484,54 @@ let fx = [];
 function fxPush(e) { if (fx.length < 60) fx.push(e); }
 // Impact frames: for a split second the whole arena turns into flat high-contrast silhouettes with
 // speed lines bursting from the hit, the way action comics and anime freeze a big blow.
-const IMPACT = { t: 0, max: 0, x: 0, y: 0, el: 'fire', strong: false, seed: 0 };
+const IMPACT = { t: 0, max: 0, x: 0, y: 0, el: 'fire', strong: false, seed: 0, style: 'radial', dir: 1, ult: false };
+// which look an impact frame gets, from the move that landed
+function impactStyle(type, el) {
+  if (el === 'steel' && (type === 'burst' || type === 'projectile' || type === 'dash')) return 'cross';
+  return ({ projectile: 'streak', beam: 'band', burst: 'rings', strike: 'pillar', rain: 'pillar', dash: 'slash', wave: 'ground', zone: 'shards', trap: 'shards', orbit: 'spiral', summon: 'spiral' })[type] || 'radial';
+}
 const reduceMotion = (() => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } })();
 let impactOn = (() => { try { return localStorage.getItem('stick-impact') !== 'off'; } catch (e) { return true; } })();
-function impactFrame(x, y, el, strong) {
+function impactFrame(x, y, el, strong, style = 'radial', dir = 1, ult = false) {
   if (!impactOn || reduceMotion) return;
   if (IMPACT.t > 0 && IMPACT.strong && !strong) return;
   IMPACT.max = IMPACT.t = strong ? 0.13 : 0.055; IMPACT.x = x; IMPACT.y = y; IMPACT.el = el; IMPACT.strong = strong; IMPACT.seed = Math.random() * 1000;
+  IMPACT.style = style; IMPACT.dir = dir || 1; IMPACT.ult = ult;
 }
-function impactFx(x, y, el, k = 1) {
-  impactFrame(x, y, el, k > 1.2);
+// Cartoon blood: droplets spray away from the hit, arc down, and leave splats on the floor that fade.
+let bloodOn = (() => { try { return localStorage.getItem('stick-blood') !== 'off'; } catch (e) { return true; } })();
+let stains = [];
+const BLOOD = ['#b3122e', '#8f0a22', '#d01c3a'];
+function spillBlood(x, y, dir, amount) {
+  if (!bloodOn) return;
+  const n = Math.round(10 + amount * 14);
+  for (let i = 0; i < n; i++) {
+    // most of it sprays the way the hit pushed, some splashes back and up
+    const back = Math.random() < 0.2, sp = 90 + Math.random() * 330, an = (back ? -dir : dir) > 0 ? -0.5 + (Math.random() - 0.5) * 1.6 : Math.PI + 0.5 + (Math.random() - 0.5) * 1.6;
+    spawnP(x + (Math.random() - 0.5) * 10, y + (Math.random() - 0.5) * 10, 'blood', Math.cos(an) * sp, Math.sin(an) * sp - 120 - Math.random() * 120, 1.8, 2.5 + Math.random() * 4, 'blood');
+  }
+  // a quick splash right at the wound
+  for (let i = 0; i < 5; i++) spawnP(x, y, 'blood', (Math.random() - 0.5) * 120, (Math.random() - 0.5) * 120, 0.22, 6 + Math.random() * 5, 'bloodmist');
+}
+function addStain(x, y, size) {
+  stains.push({ x, y, r: size * (2.8 + Math.random() * 3), life: 9, max: 9, seed: Math.random() * 100, col: BLOOD[Math.floor(Math.random() * BLOOD.length)] });
+  if (stains.length > 80) stains.shift();
+}
+function drawStains() {
+  for (const st of stains) {
+    st.life -= frameDt; if (st.life <= 0) continue;
+    ctx.globalAlpha = Math.min(1, st.life / 2) * 0.85; ctx.fillStyle = st.col;
+    ctx.beginPath(); ctx.ellipse(st.x, st.y + 1, st.r, st.r * 0.28, 0, 0, 7); ctx.fill();
+    for (let k = 0; k < 3; k++) { const ox = (hash(st.seed + k) - 0.5) * st.r * 2.6; ctx.beginPath(); ctx.ellipse(st.x + ox, st.y + 1, st.r * 0.3, st.r * 0.1, 0, 0, 7); ctx.fill(); }
+  }
+  ctx.globalAlpha = 1; stains = stains.filter(s => s.life > 0);
+}
+function impactFx(x, y, el, k = 1, code = 0, dmg = 3) {
+  const blindMove = Math.floor(code / 100) % 10 === 1, ult = Math.floor(code / 1000) % 10 === 1, dir = Math.floor(code / 10000) ? -1 : 1;
+  const type = TYPE_IDS[(code % 100) - 1] || 'projectile';
+  // blinding moves already take over the victim's screen, so they skip the impact frame
+  if (!blindMove) impactFrame(x, y, el, k > 1.2 || ult, ult ? 'radial' : impactStyle(type, el), dir, ult);
+  spillBlood(x, y, dir, k * (0.6 + Math.min(10, dmg) * 0.12));
   fxPush({ kind: 'impact', x, y, r: 34 * k, el, life: 0.22, max: 0.22, rot: Math.random() * 6 });
   for (let i = 0; i < 5 * k; i++) { const a = Math.random() * 6.28, sp = 380 + Math.random() * 380; spawnP(x, y, el, Math.cos(a) * sp, Math.sin(a) * sp, 0.18 + Math.random() * 0.12, 3, 'streak'); }
 }
@@ -1798,6 +1846,46 @@ function updateCam(dt) {
 }
 // When I'm blinded my own screen is covered: a white flash for light, a creeping shroud for darkness,
 // and a thick haze in the attacker's element colour for anything else. Only the blinded player sees this.
+function drawImpactPattern(style, sx, sy, dir, ink, negative, u) {
+  const h = k => hash(IMPACT.seed + k);
+  ctx.fillStyle = ink; ctx.strokeStyle = ink;
+  const wedge = (an, inner, w, len = 1600) => { ctx.beginPath(); ctx.moveTo(sx + Math.cos(an - w) * inner, sy + Math.sin(an - w) * inner); ctx.lineTo(sx + Math.cos(an) * len, sy + Math.sin(an) * len); ctx.lineTo(sx + Math.cos(an + w) * inner, sy + Math.sin(an + w) * inner); ctx.closePath(); ctx.fill(); };
+  if (style === 'streak') { // motion lines flying past in the direction of the shot
+    for (let k = 0; k < 34; k++) { const y = sy + (h(k) - 0.5) * 520, len = 200 + h(k + 50) * 700, x0 = sx - dir * (60 + h(k + 90) * 200); ctx.lineWidth = 1 + h(k + 7) * 6; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 - dir * len, y); ctx.stroke(); }
+    for (let k = 0; k < 12; k++) wedge((dir > 0 ? 0 : Math.PI) + (h(k) - 0.5) * 1.6, 30, 0.04);
+  } else if (style === 'band') { // a thick beam-shaped band straight through the hit
+    const bh = 70 + u * 30; ctx.beginPath(); ctx.moveTo(0, sy - bh / 2);
+    for (let x = 0; x <= W; x += 40) ctx.lineTo(x, sy - bh / 2 + (h(x) - 0.5) * 18); for (let x = W; x >= 0; x -= 40) ctx.lineTo(x, sy + bh / 2 + (h(x + 3) - 0.5) * 18); ctx.closePath(); ctx.fill();
+    for (let k = 0; k < 16; k++) wedge(k / 16 * Math.PI * 2, 50, 0.02);
+  } else if (style === 'rings') { // shock rings pushing outward
+    for (let k = 0; k < 4; k++) { const r = 40 + (k * 70 + u * 120); ctx.lineWidth = 10 - k * 2; ctx.beginPath(); ctx.arc(sx, sy, r, 0, 7); ctx.stroke(); }
+    for (let k = 0; k < 20; k++) wedge(k / 20 * Math.PI * 2 + h(k) * 0.2, 90, 0.015);
+  } else if (style === 'pillar') { // hammered down from the sky
+    for (let k = 0; k < 22; k++) { const x = sx + (h(k) - 0.5) * 260, w = 2 + h(k + 30) * 10; ctx.fillRect(x - w / 2, 0, w, sy - 20 - h(k + 60) * 60); }
+    ctx.lineWidth = 4; for (let k = 0; k < 7; k++) { let x = sx, y = sy + 10; ctx.beginPath(); ctx.moveTo(x, y); for (let j = 0; j < 4; j++) { x += (h(k * 9 + j) - 0.5) * 120; y += 18 + h(k * 9 + j + 4) * 22; ctx.lineTo(x, y); } ctx.stroke(); }
+  } else if (style === 'slash') { // one huge diagonal cut across the screen
+    ctx.save(); ctx.translate(sx, sy); ctx.rotate(dir > 0 ? -0.5 : 0.5);
+    ctx.beginPath(); ctx.moveTo(-1400, -6); ctx.quadraticCurveTo(0, -38, 1400, -6); ctx.quadraticCurveTo(0, 22, -1400, 6); ctx.closePath(); ctx.fill();
+    for (let k = 0; k < 6; k++) { const o = (k - 2.5) * 34; ctx.fillRect(-900, o + 50, 1800, 2 + h(k) * 3); }
+    ctx.restore();
+  } else if (style === 'cross') { // steel: a crossed double slash
+    ctx.save(); ctx.translate(sx, sy);
+    for (const a of [-0.75, 0.75]) { ctx.save(); ctx.rotate(a); ctx.beginPath(); ctx.moveTo(-1200, -4); ctx.quadraticCurveTo(0, -26, 1200, -4); ctx.quadraticCurveTo(0, 16, -1200, 4); ctx.closePath(); ctx.fill(); ctx.restore(); }
+    ctx.restore();
+  } else if (style === 'ground') { // the floor itself erupts
+    for (let k = 0; k < 26; k++) { const y = sy + 20 + h(k) * 120, len = 300 + h(k + 40) * 900, x0 = sx - dir * h(k + 80) * 100; ctx.lineWidth = 2 + h(k + 3) * 7; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 - dir * len, y); ctx.stroke(); }
+    for (let k = 0; k < 10; k++) wedge(-Math.PI / 2 + (h(k) - 0.5) * 1.6, 40, 0.05);
+  } else if (style === 'shards') { // the area shatters into flying glass
+    for (let k = 0; k < 26; k++) { const an = h(k) * Math.PI * 2, r = 60 + h(k + 20) * 260 + u * 80, sz = 10 + h(k + 40) * 30; const x = sx + Math.cos(an) * r, y = sy + Math.sin(an) * r;
+      ctx.beginPath(); ctx.moveTo(x + Math.cos(an) * sz, y + Math.sin(an) * sz); ctx.lineTo(x + Math.cos(an + 2.2) * sz * 0.5, y + Math.sin(an + 2.2) * sz * 0.5); ctx.lineTo(x + Math.cos(an - 2.2) * sz * 0.5, y + Math.sin(an - 2.2) * sz * 0.5); ctx.closePath(); ctx.fill(); }
+  } else if (style === 'spiral') { // a swirl winding into the hit
+    ctx.lineWidth = 5;
+    for (let arm = 0; arm < 5; arm++) { ctx.beginPath(); for (let t = 0; t < 1; t += 0.03) { const an = arm / 5 * Math.PI * 2 + t * 5 + u * 2, r = 40 + t * 700; const x = sx + Math.cos(an) * r, y = sy + Math.sin(an) * r; if (t === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); } ctx.stroke(); }
+  } else { // radial speed lines
+    const n = IMPACT.strong ? 44 : 26;
+    for (let k = 0; k < n; k++) { const r = h(k); wedge((k / n) * Math.PI * 2 + r * 0.25, 40 + r * 90, 0.012 + r * 0.03); }
+  }
+}
 function drawImpactFrame() {
   if (IMPACT.t <= 0) return;
   IMPACT.t = Math.max(0, IMPACT.t - frameDt);
@@ -1809,17 +1897,8 @@ function drawImpactFrame() {
   const fade = IMPACT.strong ? 1 : 0.82 * (1 - u * 0.5);
   ctx.save();
   ctx.globalAlpha = fade; ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-  // speed lines: thin wedges shooting out from the point of impact
-  const n = IMPACT.strong ? 44 : 26;
-  ctx.fillStyle = negative ? withA(col, 0.9) : withA(col, 0.55);
-  for (let k = 0; k < n; k++) {
-    const r = hash(IMPACT.seed + k), an = (k / n) * Math.PI * 2 + r * 0.25, inner = 40 + r * 90, w = 0.012 + r * 0.03;
-    ctx.beginPath();
-    ctx.moveTo(sx + Math.cos(an - w) * inner, sy + Math.sin(an - w) * inner);
-    ctx.lineTo(sx + Math.cos(an) * 1600, sy + Math.sin(an) * 1600);
-    ctx.lineTo(sx + Math.cos(an + w) * inner, sy + Math.sin(an + w) * inner);
-    ctx.closePath(); ctx.fill();
-  }
+  drawImpactPattern(IMPACT.style, sx, sy, IMPACT.dir, negative ? withA(col, 0.9) : withA(col, 0.6), negative, u);
+  if (IMPACT.ult) drawImpactPattern('rings', sx, sy, 1, negative ? withA(col, 0.6) : withA(col, 0.4), negative, u);
   // jagged starburst right where the blow landed
   const R = (IMPACT.strong ? 70 : 42) * (0.8 + u * 0.6);
   ctx.fillStyle = col; ctx.strokeStyle = negative ? '#04060d' : '#ffffff'; ctx.lineWidth = 3;
@@ -1880,6 +1959,7 @@ function render() {
   ctx.translate(W / 2, H / 2); ctx.scale(cam.z, cam.z); ctx.translate(-cam.x, -cam.y);
   if (shake > 0) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
   drawArena();
+  drawStains();
   ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, GROUND); ctx.clip();
   drawEntities();
   ctx.restore();
@@ -2308,7 +2388,7 @@ function applyEntities(s) {
     if (!Array.isArray(e) || e[0] <= NET.seenEv) return;
     NET.seenEv = e[0];
     texts.push({ x: e[1], y: e[2], text: String(e[3]).slice(0, 24), col: /^#[0-9a-f]{3,8}$|^rgba?\([\d.,\s]+\)$/i.test(e[4]) ? e[4] : C.ink, size: clamp(Number(e[5]) || 22, 14, 40), life: 0.9 });
-    if (e[6] && EL_IDS.includes(e[6])) { burstParticles(e[1], e[2] + 26, e[6], 12); impactFx(e[1], e[2] + 26, e[6], /head/.test(String(e[3])) ? 1.4 : 1); }
+    if (e[6] && EL_IDS.includes(e[6])) { burstParticles(e[1], e[2] + 26, e[6], 12); impactFx(e[1], e[2] + 26, e[6], /head/.test(String(e[3])) ? 1.4 : 1, Number(e[7]) || 0, 4); }
   });
 }
 function guestUpdate(dt) {
@@ -2678,7 +2758,7 @@ function showScreen(html) {
   screenEl.innerHTML = html; screenEl.hidden = false; document.body.classList.add('has-screen'); placeCanvas();
 }
 function hideScreen() { if (PV.on) stopPreview(); screenEl.hidden = true; screenEl.innerHTML = ''; document.body.classList.remove('has-screen'); placeCanvas(); }
-function clearArena() { projectiles = []; beams = []; zones = []; rings = []; particles = []; texts = []; strikes = []; waves = []; traps = []; summons = []; flashes = []; pending = []; fx = []; banner = 0; }
+function clearArena() { stains = []; projectiles = []; beams = []; zones = []; rings = []; particles = []; texts = []; strikes = []; waves = []; traps = []; summons = []; flashes = []; pending = []; fx = []; banner = 0; }
 
 function segButtons(key, items) {
   return items.map(([v, label]) => `<button data-set="${key}:${v}" aria-pressed="${String(opts[key]) === String(v)}">${label}</button>`).join('');
@@ -2701,6 +2781,7 @@ function showSettings() {
     <h3 style="margin-top:18px">Effects</h3>
     <div class="opt"><span>Impact frames</span><div class="seg"><button data-impact="on" aria-pressed="${impactOn}">On</button><button data-impact="off" aria-pressed="${!impactOn}">Off</button></div></div>
     <p class="note">The split-second high-contrast flash on big hits. Turn it off if flashing bothers you (it's also off when your system asks for reduced motion).</p>
+    <div class="opt"><span>Blood</span><div class="seg"><button data-blood="on" aria-pressed="${bloodOn}">On</button><button data-blood="off" aria-pressed="${!bloodOn}">Off</button></div></div>
     <h3 style="margin-top:18px">Online play</h3>
     <p class="note">Online games connect the two players directly. Leave this empty unless your network blocks direct connections and you run your own PeerJS server.</p>
     <div class="opt"><span>Custom PeerJS server</span>${inp('peerHost', settings.peerHost, 'text', 'leave empty to use the free public one')}</div>
@@ -3029,6 +3110,7 @@ screenEl.addEventListener('click', e => {
   }
   if (btn.dataset.netpick) { const keep = {}; screenEl.querySelectorAll('[data-setting]').forEach(i => { keep[i.dataset.setting] = i.value; }); settings.net = btn.dataset.netpick; showSettings(); Object.entries(keep).forEach(([k, v]) => { const i = screenEl.querySelector(`[data-setting="${k}"]`); if (i) i.value = v; }); return; }
   if (btn.dataset.aiult !== undefined) { BUILD.ai.ult = btn.dataset.aiult === '1'; const box = screenEl.querySelector('[data-aiprompt]'); if (box) BUILD.ai.prompt = box.value; showBuild(); return; }
+  if (btn.dataset.blood) { bloodOn = btn.dataset.blood === 'on'; try { localStorage.setItem('stick-blood', bloodOn ? 'on' : 'off'); } catch (e) {} if (!bloodOn) stains = []; showSettings(); return; }
   if (btn.dataset.impact) { impactOn = btn.dataset.impact === 'on'; try { localStorage.setItem('stick-impact', impactOn ? 'on' : 'off'); } catch (e) {} showSettings(); return; }
   if (btn.dataset.pel) { sideEls[0] = btn.dataset.pel; showPracticeMenu(); return; }
   if (btn.dataset.bel) { BUILD.el = btn.dataset.bel; BUILD.pv = null; BUILD.draft = null; showBuild(); return; }

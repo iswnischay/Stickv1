@@ -391,3 +391,7 @@ body.has-screen .topbar { visibility: hidden; }
 .brand { font-size: 1.25rem; line-height: 1.4; }
 .logo-mark .vs, .brand .vs { font-family: "Rock Salt", var(--display); font-style: normal; font-weight: 400; font-size: 0.62em; margin: 0 0.32em 0 0.6em; transform: rotate(-12deg) translateY(0.05em); }
 .logo-mark .one, .brand .one { font-family: "Rock Salt", var(--impact); }
+/* Rock Salt only comes in one weight, so thicken the strokes with an outline in the same colour */
+.logo-mark, .logo-mark .vs, .logo-mark .one { -webkit-text-stroke: 0.045em currentColor; paint-order: stroke fill; }
+.brand, .brand .vs, .brand .one { -webkit-text-stroke: 0.06em currentColor; paint-order: stroke fill; }
+.logo-mark { text-shadow: 0.03em 0.04em 0 currentColor; letter-spacing: 0.02em; }
