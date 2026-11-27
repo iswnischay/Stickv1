@@ -1483,22 +1483,101 @@ function nudge(f, key, amt, i) { if (!f.poseV) return; if (i === undefined) f.po
 // Cosmetic effects that live only on this screen (impact stars, ground rings). Never affect gameplay.
 let fx = [];
 function fxPush(e) { if (fx.length < 60) fx.push(e); }
-// Impact frames: for a split second the whole arena turns into flat high-contrast silhouettes with
-// speed lines bursting from the hit, the way action comics and anime freeze a big blow.
-const IMPACT = { t: 0, max: 0, x: 0, y: 0, el: 'fire', strong: false, seed: 0, style: 'radial', dir: 1, ult: false };
-// which look an impact frame gets, from the move that landed
+// ---------- impact frames ----------
+// A hit freezes into a few hand-drawn "keyframes" (about 30 ms each). What you see is built from three layers:
+//   1. the element's palette and texture  (fire licks, water ripples, glass-crack ice, forked lightning, rock chunks,
+//      wind crescents, light glints, ink blots for darkness, RGB glitch for antimatter, sword slashes for steel)
+//   2. the move type's composition        (streaks for shots, a band for beams, rings for bursts, pillars from the sky, ...)
+//   3. a per-element emblem at the hit point, plus a shock echo of whoever got hit
+// Keyframes cycle through the element's palette and every hit gets a fresh layout, so no two read the same.
+const IMP_PAL = {
+  fire:       [{ bg: '#2a0600', fig: '#ffd23f', ink: '#ff6a1f' }, { bg: '#fff1d6', fig: '#1a0500', ink: '#ff5a1f' }, { bg: '#ff6a1a', fig: '#1a0500', ink: '#ffe08a' }],
+  water:      [{ bg: '#041633', fig: '#cfeaff', ink: '#3fa9ff' }, { bg: '#e8f6ff', fig: '#06204a', ink: '#2a7fff' }, { bg: '#1f5fbf', fig: '#ffffff', ink: '#9fd6ff' }],
+  ice:        [{ bg: '#f4fdff', fig: '#0b3a5a', ink: '#5cc8f2' }, { bg: '#0b2c44', fig: '#e8fbff', ink: '#8fe3ff' }, { bg: '#bfefff', fig: '#0b3a5a', ink: '#ffffff' }],
+  lightning:  [{ bg: '#000000', fig: '#ffffff', ink: '#fff36a' }, { bg: '#ffffff', fig: '#000000', ink: '#ffe600' }, { bg: '#fff36a', fig: '#000000', ink: '#000000' }],
+  earth:      [{ bg: '#3a2410', fig: '#f1dcb4', ink: '#d6a46c' }, { bg: '#f1dcb4', fig: '#2b1a0a', ink: '#8a5a2b' }],
+  wind:       [{ bg: '#0a2e26', fig: '#eafff8', ink: '#5fe6c6' }, { bg: '#eafff8', fig: '#06382e', ink: '#20b38c' }],
+  light:      [{ bg: '#fffdf0', fig: '#6a4a00', ink: '#ffc928' }, { bg: '#ffe88a', fig: '#5a3d00', ink: '#ffffff' }, { bg: '#ffffff', fig: '#c98a00', ink: '#ffd447' }],
+  darkness:   [{ bg: '#07020f', fig: '#ffffff', ink: '#a98ad6' }, { bg: '#e9ddff', fig: '#140a22', ink: '#4b2d73' }],
+  antimatter: [{ bg: '#000000', fig: '#ffffff', ink: '#ff2bd6' }, { bg: '#ffffff', fig: '#000000', ink: '#2bf0ff' }, { bg: '#ff2bd6', fig: '#000000', ink: '#2bf0ff' }],
+  steel:      [{ bg: '#0d1014', fig: '#f2f4f6', ink: '#c2cbd5' }, { bg: '#f2f4f6', fig: '#0d1014', ink: '#5d6b7a' }]
+};
+const IMP_FRAME = 0.032;
+const reduceMotion = (() => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } })();
+let impactOn = (() => { try { return localStorage.getItem('stick-impact') !== 'off'; } catch (e) { return true; } })();
+const IMPACT = { t: 0, max: 0, x: 0, y: 0, el: 'fire', strong: false, seed: 0, style: 'radial', dir: 1, ult: false, order: [0], last: '' };
+// which composition a hit gets, from the move that landed
 function impactStyle(type, el) {
   if (el === 'steel' && (type === 'burst' || type === 'projectile' || type === 'dash')) return 'cross';
   return ({ projectile: 'streak', beam: 'band', burst: 'rings', strike: 'pillar', rain: 'pillar', dash: 'slash', wave: 'ground', zone: 'shards', trap: 'shards', orbit: 'spiral', summon: 'spiral' })[type] || 'radial';
 }
-const reduceMotion = (() => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } })();
-let impactOn = (() => { try { return localStorage.getItem('stick-impact') !== 'off'; } catch (e) { return true; } })();
 function impactFrame(x, y, el, strong, style = 'radial', dir = 1, ult = false) {
   if (!impactOn || reduceMotion) return;
   if (IMPACT.t > 0 && IMPACT.strong && !strong) return;
-  IMPACT.max = IMPACT.t = strong ? 0.13 : 0.055; IMPACT.x = x; IMPACT.y = y; IMPACT.el = el; IMPACT.strong = strong; IMPACT.seed = Math.random() * 1000;
-  IMPACT.style = style; IMPACT.dir = dir || 1; IMPACT.ult = ult;
+  const pal = IMP_PAL[el] || IMP_PAL.fire, n = pal.length;
+  // body hits: 3 keyframes; head hits: 5; ultimates: 7. The palette order is shuffled per hit.
+  const frames = ult ? 7 : strong ? 5 : 3, start = Math.floor(Math.random() * n), step = Math.random() < 0.5 ? 1 : n - 1;
+  const order = Array.from({ length: frames }, (_, k) => (start + k * step) % n);
+  IMPACT.max = IMPACT.t = frames * IMP_FRAME;
+  Object.assign(IMPACT, { x, y, el, strong, style, dir: dir || 1, ult, seed: Math.random() * 1000, order, mirror: Math.random() < 0.5 ? -1 : 1, rot: (Math.random() - 0.5) * 0.5 });
 }
+// what each element's texture looks like
+function drawImpactTexture(el, sx, sy, u, ink, fi) {
+  const h = k => hash(IMPACT.seed + k * 1.37 + fi * 0.01);
+  ctx.fillStyle = ink; ctx.strokeStyle = ink; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  if (el === 'fire') { // wavy tongues of flame licking outward, flickering each keyframe
+    for (let k = 0; k < 14; k++) { const an = k / 14 * Math.PI * 2 + h(k) * 0.4, len = 260 + h(k + 3) * 380 * (0.6 + u), w = 0.08 + h(k + 5) * 0.08;
+      ctx.beginPath(); ctx.moveTo(sx + Math.cos(an - w) * 50, sy + Math.sin(an - w) * 50);
+      for (let j = 1; j <= 6; j++) { const t = j / 6, wob = Math.sin(t * 9 + fi * 2 + k) * 0.05 * (1 - t); ctx.lineTo(sx + Math.cos(an - w * (1 - t) + wob) * (50 + len * t), sy + Math.sin(an - w * (1 - t) + wob) * (50 + len * t)); }
+      for (let j = 6; j >= 1; j--) { const t = j / 6, wob = Math.sin(t * 9 + fi * 2 + k + 1) * 0.05 * (1 - t); ctx.lineTo(sx + Math.cos(an + w * (1 - t) + wob) * (50 + len * t), sy + Math.sin(an + w * (1 - t) + wob) * (50 + len * t)); }
+      ctx.closePath(); ctx.fill(); }
+  } else if (el === 'water') { // ripples spreading and a crown of droplets
+    ctx.lineWidth = 6; for (let k = 0; k < 4; k++) { const r = 60 + k * 70 + u * 90; ctx.globalAlpha = 1 - k * 0.2; ctx.beginPath(); ctx.ellipse(sx, sy, r, r * 0.55, 0, 0, 7); ctx.stroke(); } ctx.globalAlpha = 1;
+    for (let k = 0; k < 18; k++) { const an = -Math.PI + (k / 17) * Math.PI + (h(k) - 0.5) * 0.2, r = 90 + h(k + 2) * 120 + u * 60; ctx.beginPath(); ctx.ellipse(sx + Math.cos(an) * r, sy + Math.sin(an) * r * 0.9, 6 + h(k) * 8, 11 + h(k + 4) * 10, an + Math.PI / 2, 0, 7); ctx.fill(); }
+  } else if (el === 'ice') { // glass-crack: radial fractures with branches and faceted shards near the centre
+    ctx.lineWidth = 3; for (let k = 0; k < 11; k++) { let an = k / 11 * Math.PI * 2 + h(k) * 0.3, r = 30, x = sx, y = sy; ctx.beginPath(); ctx.moveTo(x, y);
+      for (let j = 0; j < 6; j++) { r += 50 + h(k * 9 + j) * 60; an += (h(k * 7 + j) - 0.5) * 0.35; x = sx + Math.cos(an) * r; y = sy + Math.sin(an) * r; ctx.lineTo(x, y); if (j === 2) { ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(an + 0.8) * 60, y + Math.sin(an + 0.8) * 60); ctx.moveTo(x, y); } } ctx.stroke(); }
+    for (let k = 0; k < 9; k++) { const an = k / 9 * Math.PI * 2, r1 = 26 + u * 20, r2 = 70 + h(k) * 40; ctx.globalAlpha = 0.55; ctx.beginPath(); ctx.moveTo(sx + Math.cos(an) * r1, sy + Math.sin(an) * r1); ctx.lineTo(sx + Math.cos(an + 0.35) * r2, sy + Math.sin(an + 0.35) * r2); ctx.lineTo(sx + Math.cos(an + 0.7) * r1, sy + Math.sin(an + 0.7) * r1); ctx.closePath(); ctx.fill(); } ctx.globalAlpha = 1;
+  } else if (el === 'lightning') { // forked bolts racing out from the hit
+    for (let k = 0; k < 7; k++) { let an = k / 7 * Math.PI * 2 + h(k) * 0.6, x = sx, y = sy; ctx.lineWidth = 5 - (k % 3); ctx.beginPath(); ctx.moveTo(x, y);
+      for (let j = 0; j < 9; j++) { an += (h(k * 13 + j + fi) - 0.5) * 0.9; x += Math.cos(an) * 60; y += Math.sin(an) * 60; ctx.lineTo(x, y); if (j === 3 || j === 6) { const bx = x + Math.cos(an + 1) * 70, by = y + Math.sin(an + 1) * 70; ctx.lineTo(bx, by); ctx.moveTo(x, y); } } ctx.stroke(); }
+  } else if (el === 'earth') { // chunky rocks bursting out and the floor cracking
+    for (let k = 0; k < 16; k++) { const an = h(k) * Math.PI * 2, r = 70 + h(k + 1) * 220 + u * 80, s = 10 + h(k + 2) * 26, x = sx + Math.cos(an) * r, y = sy + Math.sin(an) * r; ctx.beginPath(); for (let j = 0; j < 5; j++) { const a2 = j / 5 * Math.PI * 2 + h(k + j), rr = s * (0.6 + h(k * 5 + j) * 0.5); ctx.lineTo(x + Math.cos(a2) * rr, y + Math.sin(a2) * rr); } ctx.closePath(); ctx.fill(); }
+    ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(sx - 600, sy + 60); for (let x = -600; x <= 600; x += 50) ctx.lineTo(sx + x, sy + 60 + (h(x) - 0.5) * 30); ctx.stroke();
+  } else if (el === 'wind') { // sweeping crescents circling the point
+    for (let k = 0; k < 9; k++) { const r = 70 + k * 42 + u * 60, a0 = h(k) * 6.28 + u * 3 * IMPACT.mirror; ctx.lineWidth = 10 - k; ctx.beginPath(); ctx.arc(sx, sy, r, a0, a0 + 1.2 + h(k + 3) * 1.2); ctx.stroke(); }
+  } else if (el === 'light') { // a lens glint: long 4-point cross, fine rays and a halo ring
+    const L = 500 + u * 300; ctx.beginPath(); ctx.moveTo(sx - L, sy); ctx.lineTo(sx, sy - 10); ctx.lineTo(sx + L, sy); ctx.lineTo(sx, sy + 10); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(sx, sy - L * 0.7); ctx.lineTo(sx + 10, sy); ctx.lineTo(sx, sy + L * 0.7); ctx.lineTo(sx - 10, sy); ctx.closePath(); ctx.fill();
+    ctx.lineWidth = 2; for (let k = 0; k < 24; k++) { const an = k / 24 * Math.PI * 2 + 0.13; ctx.beginPath(); ctx.moveTo(sx + Math.cos(an) * 80, sy + Math.sin(an) * 80); ctx.lineTo(sx + Math.cos(an) * (240 + h(k) * 200), sy + Math.sin(an) * (240 + h(k) * 200)); ctx.stroke(); }
+    ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(sx, sy, 110 + u * 50, 0, 7); ctx.stroke();
+  } else if (el === 'darkness') { // ink splattered across the frame, dripping
+    for (let k = 0; k < 22; k++) { const an = h(k) * Math.PI * 2, r = 60 + h(k + 1) * 340, s = 8 + h(k + 2) * 30 * (1 - r / 500), x = sx + Math.cos(an) * r, y = sy + Math.sin(an) * r; ctx.beginPath(); ctx.arc(x, y, s, 0, 7); ctx.fill(); if (h(k + 4) < 0.5) { ctx.beginPath(); ctx.ellipse(x, y + s + 14 * (0.5 + u), s * 0.3, 14 * (0.5 + u), 0, 0, 7); ctx.fill(); } }
+  } else if (el === 'antimatter') { // glitch blocks and scanlines
+    for (let k = 0; k < 18; k++) { const y = (h(k + fi * 3) - 0.5) * H + sy, x = sx + (h(k + 7 + fi) - 0.5) * W; ctx.globalAlpha = 0.8; ctx.fillRect(x - 120, y, 60 + h(k) * 260, 4 + h(k + 2) * 24); }
+    ctx.globalAlpha = 0.25; for (let y = 0; y < H; y += 5) ctx.fillRect(0, y, W, 2); ctx.globalAlpha = 1;
+  } else if (el === 'steel') { // long thin sword slashes crossing the hit, with sparks
+    for (let k = 0; k < 4; k++) { const a = (h(k) - 0.5) * 2.4, L = 700; ctx.save(); ctx.translate(sx, sy); ctx.rotate(a); ctx.beginPath(); ctx.moveTo(-L, 0); ctx.quadraticCurveTo(0, -5 - h(k + 2) * 6, L, 0); ctx.quadraticCurveTo(0, 2, -L, 0); ctx.fill(); ctx.restore(); }
+    for (let k = 0; k < 20; k++) { const an = h(k + 30) * 6.28, r = 40 + h(k + 31) * 200; ctx.fillRect(sx + Math.cos(an) * r, sy + Math.sin(an) * r, 3, 3); }
+  }
+}
+// the mark right where the blow landed
+function drawImpactEmblem(el, sx, sy, R, fill, edge, fi) {
+  const h = k => hash(IMPACT.seed + k * 2.11);
+  ctx.fillStyle = fill; ctx.strokeStyle = edge; ctx.lineWidth = 3; ctx.beginPath();
+  if (el === 'water') { for (let k = 0; k < 12; k++) { const an = -Math.PI + k / 11 * Math.PI; ctx.lineTo(sx + Math.cos(an) * R * (k % 2 ? 0.5 : 1.1), sy + Math.sin(an) * R * (k % 2 ? 0.5 : 1.1)); } ctx.arc(sx, sy, R * 0.55, 0, Math.PI); }
+  else if (el === 'ice') { for (let k = 0; k < 12; k++) { const an = k / 12 * Math.PI * 2, r = k % 2 ? R * 0.3 : R; ctx.lineTo(sx + Math.cos(an) * r, sy + Math.sin(an) * r); } }
+  else if (el === 'lightning') { for (let k = 0; k < 14; k++) { const an = k / 14 * Math.PI * 2 + h(fi), r = k % 2 ? R * (0.25 + h(k) * 0.2) : R * (0.8 + h(k + 1) * 0.5); ctx.lineTo(sx + Math.cos(an) * r, sy + Math.sin(an) * r); } }
+  else if (el === 'earth') { for (let k = 0; k < 7; k++) { const an = k / 7 * Math.PI * 2 + h(k), r = R * (0.7 + h(k + 2) * 0.4); ctx.lineTo(sx + Math.cos(an) * r, sy + Math.sin(an) * r); } }
+  else if (el === 'wind') { for (let t = 0; t < 1; t += 0.04) { const an = t * 10 * IMPACT.mirror, r = R * (1 - t); ctx.lineTo(sx + Math.cos(an) * r, sy + Math.sin(an) * r); } ctx.closePath(); ctx.lineWidth = 6; ctx.stroke(); return; }
+  else if (el === 'light') { ctx.save(); ctx.translate(sx, sy); starPath(R * 1.4, R * 0.18, 4, Math.PI / 4); ctx.fill(); ctx.stroke(); ctx.restore(); return; }
+  else if (el === 'darkness') { for (let k = 0; k < 16; k++) { const an = k / 16 * Math.PI * 2, r = R * (0.7 + h(k) * 0.5); ctx.lineTo(sx + Math.cos(an) * r, sy + Math.sin(an) * r); } }
+  else if (el === 'antimatter') { for (let k = 0; k < 9; k++) { const s = R * (0.2 + h(k) * 0.5); ctx.rect(sx + (h(k + 3) - 0.5) * R * 1.6 - s / 2, sy + (h(k + 5) - 0.5) * R * 1.6 - s / 2, s, s); } }
+  else if (el === 'steel') { ctx.save(); ctx.translate(sx, sy); for (const a of [0.78, -0.78]) { ctx.rotate(a); ctx.rect(-R * 1.3, -3, R * 2.6, 6); ctx.rotate(-a); } ctx.fill(); ctx.restore(); return; }
+  else { for (let k = 0; k < 18; k++) { const an = k / 18 * Math.PI * 2 + h(0), r = k % 2 ? R * (0.4 + 0.25 * h(k)) : R * (0.9 + h(k + 1) * 0.3), wob = el === 'fire' ? Math.sin(fi * 3 + k) * 6 : 0; ctx.lineTo(sx + Math.cos(an) * (r + wob), sy + Math.sin(an) * (r + wob)); } }
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+}
+
 // Cartoon blood: droplets spray away from the hit, arc down, and leave splats on the floor that fade.
 let bloodOn = (() => { try { return localStorage.getItem('stick-blood') !== 'off'; } catch (e) { return true; } })();
 let stains = [];
@@ -1892,30 +1971,32 @@ function drawImpactPattern(style, sx, sy, dir, ink, negative, u) {
 function drawImpactFrame() {
   if (IMPACT.t <= 0) return;
   IMPACT.t = Math.max(0, IMPACT.t - frameDt);
-  const u = 1 - IMPACT.t / IMPACT.max, col = elCol(IMPACT.el);
-  // strong hits flip: first a bright negative frame, then a dark one; light hits use only the dark frame
-  const negative = IMPACT.strong && u < 0.45;
-  const bg = negative ? '#f3f7ff' : '#04060d', fig = negative ? '#04060d' : '#ffffff';
+  const el = IMPACT.el, pal = IMP_PAL[el] || IMP_PAL.fire;
+  const elapsed = IMPACT.max - IMPACT.t, fi = Math.min(IMPACT.order.length - 1, Math.floor(elapsed / IMP_FRAME));
+  const P = pal[IMPACT.order[fi]], u = clamp(elapsed / IMPACT.max, 0, 1);
   const sx = (IMPACT.x - cam.x) * cam.z + W / 2, sy = (IMPACT.y - cam.y) * cam.z + H / 2;
-  const fade = IMPACT.strong ? 1 : 0.82 * (1 - u * 0.5);
+  const alpha = IMPACT.strong || IMPACT.ult ? 1 : 0.92;
   ctx.save();
-  ctx.globalAlpha = fade; ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-  drawImpactPattern(IMPACT.style, sx, sy, IMPACT.dir, negative ? withA(col, 0.9) : withA(col, 0.6), negative, u);
-  if (IMPACT.ult) drawImpactPattern('rings', sx, sy, 1, negative ? withA(col, 0.6) : withA(col, 0.4), negative, u);
-  // jagged starburst right where the blow landed
-  const R = (IMPACT.strong ? 70 : 42) * (0.8 + u * 0.6);
-  ctx.fillStyle = col; ctx.strokeStyle = negative ? '#04060d' : '#ffffff'; ctx.lineWidth = 3;
-  ctx.beginPath();
-  for (let k = 0; k < 18; k++) { const an = k / 18 * Math.PI * 2 + IMPACT.seed, rr = k % 2 ? R * (0.35 + 0.2 * hash(IMPACT.seed + k * 3)) : R; ctx.lineTo(sx + Math.cos(an) * rr, sy + Math.sin(an) * rr); }
-  ctx.closePath(); ctx.fill(); ctx.stroke();
-  // fighters as solid silhouettes, in world space
-  ctx.globalAlpha = 1;
+  // the frozen frame punches in around the hit and settles
+  const z = 1 + (IMPACT.strong ? 0.1 : 0.06) * (1 - u);
+  ctx.translate(sx, sy); ctx.scale(z, z); ctx.rotate(IMPACT.rot * (1 - u) * 0.12); ctx.translate(-sx, -sy);
+  ctx.globalAlpha = alpha; ctx.fillStyle = P.bg; ctx.fillRect(-W, -H, W * 3, H * 3);
+  ctx.save(); ctx.globalAlpha = alpha * 0.7; drawImpactTexture(el, sx, sy, u, P.ink, fi); ctx.restore();
+  ctx.save(); ctx.globalAlpha = alpha * 0.85; drawImpactPattern(IMPACT.style, sx, sy, IMPACT.dir * IMPACT.mirror, P.ink, false, u);
+  if (IMPACT.ult) drawImpactPattern('rings', sx, sy, 1, P.ink, false, u); ctx.restore();
+  drawImpactEmblem(el, sx, sy, (IMPACT.ult ? 80 : IMPACT.strong ? 58 : 40) * (0.85 + u * 0.4), P.ink, P.fig, fi);
+  // fighters as flat silhouettes; whoever got hit leaves a shock echo behind
   ctx.translate(W / 2, H / 2); ctx.scale(cam.z, cam.z); ctx.translate(-cam.x, -cam.y);
+  let victim = null, best = 1e9;
+  for (const f of fighters) { const d = Math.hypot(f.x - IMPACT.x, f.y - 40 - IMPACT.y); if (d < best) { best = d; victim = f; } }
   for (const f of fighters) {
-    if (!f.pose) continue;
-    const fs = Math.abs(f.faceS) < 0.15 ? Math.sign(f.faceS || 1) * 0.15 : f.faceS;
+    if (!f.pose || (state === 'ko' && f.koHide)) continue;
+    const fs = koFS(f);
     ctx.save(); ctx.translate(f.x, f.y); ctx.scale(1 / Math.sqrt(f.sq || 1), f.sq || 1); ctx.translate(-f.x, -f.y);
-    ctx.lineWidth = 7; drawBody(f, f.pose, fs, 0, fig, true); ctx.restore();
+    if (f === victim) { for (let e = 1; e <= 2; e++) { ctx.save(); ctx.globalAlpha = 0.45 / e; ctx.translate(-IMPACT.dir * 16 * e * (1 - u * 0.5), -4 * e); drawBody(f, f.pose, fs, 0, P.ink, true); ctx.restore(); } }
+    if (el === 'antimatter') { ctx.save(); ctx.translate(-5, 0); drawBody(f, f.pose, fs, 0, '#ff2bd6', true); ctx.translate(10, 0); drawBody(f, f.pose, fs, 0, '#2bf0ff', true); ctx.restore(); }
+    drawBody(f, f.pose, fs, 0, P.fig, true);
+    ctx.restore();
   }
   ctx.restore();
 }
