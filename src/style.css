@@ -400,3 +400,4 @@ body.has-screen .topbar { visibility: hidden; }
 .loadout { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 4px; }
 .loadout li { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .loadout .slotkey { min-width: 1.8em; }
+.loop-error { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 60; max-width: min(720px, 92vw); padding: 10px 14px; border-radius: 10px; background: #b3122e; color: #fff; font: 600 14px var(--display); cursor: pointer; }

@@ -251,6 +251,11 @@ const STANDALONE = !(window.claude && typeof window.claude.use === 'function');
 
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
+// Safety net: a negative radius makes canvas throw (and Safari is stricter about it), so clamp them to zero.
+{ const A = ctx.arc.bind(ctx), E = ctx.ellipse.bind(ctx), R = ctx.createRadialGradient.bind(ctx), nn = v => (v > 0 ? v : 0);
+  ctx.arc = (x, y, r, a0, a1, ccw) => A(x, y, nn(r), a0, a1, ccw);
+  ctx.ellipse = (x, y, rx, ry, rot, a0, a1, ccw) => E(x, y, nn(rx), nn(ry), rot, a0, a1, ccw);
+  ctx.createRadialGradient = (x0, y0, r0, x1, y1, r1) => R(x0, y0, nn(r0), x1, y1, nn(r1)); }
 const screenEl = document.getElementById('screen');
 const legendEl = document.getElementById('legend');
 let scale = 1;
@@ -2076,12 +2081,30 @@ function resize() {
 }
 addEventListener('resize', resize);
 
-let last = performance.now(), slowmo = 0;
+let last = performance.now(), slowmo = 0; // re-based on the first frame (see loop)
+// Safari can hand the first animation frame a timestamp slightly *before* the clock we started from,
+// which made the first time step negative and broke drawing. Time steps are now kept between 0 and 1/30 s,
+// and a drawing error can no longer freeze the game: it's reported once and the next frame carries on.
+let loopErrShown = false;
+function reportLoopError(e) {
+  if (loopErrShown) return; loopErrShown = true;
+  try { console.error('Stick v1 frame error:', e); } catch (_) {}
+  const d = document.createElement('div'); d.className = 'loop-error';
+  d.textContent = 'Something went wrong drawing the game (' + String((e && e.message) || e).slice(0, 160) + '). The game will keep running; please send a screenshot of this message.';
+  d.addEventListener('click', () => d.remove()); document.body.appendChild(d);
+}
 function loop(now) {
-  const dt = Math.min(1 / 30, (now - last) / 1000); last = now; frameDt = paused ? 0 : dt;
+  let dt = (now - last) / 1000; last = now;
+  if (!(dt > 0)) dt = 0; dt = Math.min(1 / 30, dt);
+  frameDt = paused ? 0 : dt;
   slowmo = Math.max(0, slowmo - dt);
-  if (!paused) update(slowmo > 0 && !(NET.on && NET.role === 'guest') ? dt * 0.4 : dt);
-  render();
+  try { if (!paused) update(slowmo > 0 && !(NET.on && NET.role === 'guest') ? dt * 0.4 : dt); } catch (e) { reportLoopError(e); }
+  if (!Number.isFinite(cam.z) || !Number.isFinite(cam.x) || !Number.isFinite(cam.y)) { cam.z = 1; cam.x = W / 2; cam.y = H / 2; cam.punch = 0; }
+  try { render(); }
+  catch (e) {
+    reportLoopError(e);
+    try { for (let k = 0; k < 32; k++) ctx.restore(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; } catch (_) {}
+  }
   requestAnimationFrame(loop);
 }
 
@@ -4120,6 +4143,6 @@ if (window.StickAccount) window.StickAccount.onChange(st => {
   else if (state === 'build') showBuild();
 });
 initSample();
-requestAnimationFrame(loop);
+requestAnimationFrame(t => { last = t; loop(t); });
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => render());
 })();
