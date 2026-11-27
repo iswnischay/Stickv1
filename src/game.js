@@ -110,7 +110,7 @@ function keyShort(c) { if (!c) return '–'; if (SHORT[c]) return SHORT[c]; retu
 const soloScheme = () => opts.aim === 'mouse' ? 'solo' : 'soloAuto';
 function schemeFor(side) {
   if (opts.mode === 'online') return side === NET.side ? soloScheme() : null;
-  return opts.mode === 'bot' ? (side === 0 ? soloScheme() : null) : (side === 0 ? 'duo1' : 'duo2');
+  return opts.mode === 'bot' || opts.mode === 'practice' ? (side === 0 ? soloScheme() : null) : (side === 0 ? 'duo1' : 'duo2');
 }
 const PAD_NAMES = ['A / ✕', 'B / ○', 'X / □', 'Y / △', 'LB / L1', 'RB / R1', 'LT / L2', 'RT / R2', 'View / Create', 'Menu / Options', 'Left stick press', 'Right stick press', 'D-pad up', 'D-pad down', 'D-pad left', 'D-pad right', 'Home / PS'];
 const PAD_SHORT = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'View', 'Menu', 'LS', 'RS', '↑', '↓', '←', '→', 'Home'];
@@ -256,7 +256,7 @@ const legendEl = document.getElementById('legend');
 let scale = 1;
 const mouse = { x: W / 2, y: H / 2, over: false };
 
-function sideLabel(i) { if (opts.mode === 'online') return i === NET.side ? 'You' : 'Opponent'; return opts.mode === 'bot' ? (i === 0 ? 'You' : 'Bot') : (i === 0 ? 'Player 1' : 'Player 2'); }
+function sideLabel(i) { if (opts.mode === 'practice') return i === 0 ? 'You' : 'Dummy'; if (opts.mode === 'online') return i === NET.side ? 'You' : 'Opponent'; return opts.mode === 'bot' ? (i === 0 ? 'You' : 'Bot') : (i === 0 ? 'Player 1' : 'Player 2'); }
 let sideEls = ['fire', 'water'];
 function randomOther(el) { const o = EL_IDS.filter(x => x !== el); return o[Math.floor(Math.random() * o.length)]; }
 
@@ -292,6 +292,7 @@ addEventListener('keydown', e => {
   if (tag === 'TEXTAREA' || tag === 'INPUT') return;
   if (fighting()) {
     if (e.code === 'Escape' || e.code === 'KeyP') { e.preventDefault(); togglePause(); return; }
+    if (paused && opts.mode === 'practice' && e.code === 'KeyQ') { e.preventDefault(); leavePractice(); return; }
     if (allBoundCodes().has(e.code) || e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
   }
   if (!e.repeat) pressed.add(e.code);
@@ -454,12 +455,14 @@ function registerHit(att, tgt, idx, isHead, m, srcX) {
 }
 
 /* ---------- casting ---------- */
+let castLead = 0;
 function mkProj(f, m, i, x, y, ang, sp, r, o = {}) {
   const el = o.el || f.element;
   const p = { owner: f, move: m, idx: i, bx: x, by: y, x, y, ang, sp, r, t: 0, phase: o.phase || Math.random() * 6, life: o.life || 2.6,
     homing: o.homing ?? effOf(m, 'homing'), curve: o.curve ?? effOf(m, 'curve'), pierce: o.pierce ?? effOf(m, 'pierce') > 0, hitSet: new Set(),
     slow: sp <= 600, el, shape: m.visual.shape, g: 0, vx: 0, vy: 0 };
   if (o.gravity) { p.g = o.gravity; p.vx = Math.cos(ang) * sp; p.vy = Math.sin(ang) * sp; }
+  if (castLead > 0) { p.x += Math.cos(ang) * sp * castLead; p.y += Math.sin(ang) * sp * castLead; p.t += castLead; }
   return p;
 }
 const CAST_DUR = { strike: 0.42, rain: 0.42, summon: 0.45, wave: 0.38, burst: 0.32, zone: 0.34, trap: 0.34, orbit: 0.4, beam: 0.34, projectile: 0.26, shield: 0.3, dash: 0.2 };
@@ -646,7 +649,8 @@ function updateAim(f, pad) {
 
 function controlFighter(f, dt) {
   let ax = 0, wantJump = false, jumpHeld = false, drop = false, casts = [], pad = null;
-  if (f.isBot) { const b = botThink(f, dt); ({ ax, wantJump, jumpHeld, drop } = b); if (b.cast >= 0) casts.push(b.cast); }
+  if (f.dummy) { /* practice dummy: stands still */ }
+  else if (f.isBot) { const b = botThink(f, dt); ({ ax, wantJump, jumpHeld, drop } = b); if (b.cast >= 0) casts.push(b.cast); }
   else if (f.remote) ({ ax, wantJump, jumpHeld, drop, casts } = netRemoteInput(f));
   else {
     const r = readLocalInput(f.scheme, padIndexFor(f));
@@ -675,7 +679,18 @@ function controlFighter(f, dt) {
   if (!jumpHeld && !f.jumpCut && f.vy < 0) { f.vy *= 0.5; f.jumpCut = true; }
   f.fastFall = drop && !f.onGround;
   f.dropT = drop ? 0.2 : Math.max(0, f.dropT - dt);
-  if (casts.length) casts.forEach(i => tryCast(f, i));
+  if (casts.length && f.remote) {
+    // the guest pressed this a little while ago: start the attack that far along so it lands where they expect
+    const d = ((oppPeer() || {}).data || {}).in || {}, lead = clamp((Number(d.lt) || 0) / 2000, 0, 0.12);
+    const pb = pending.length, sb = strikes.length, bb = beams.length;
+    castLead = lead; casts.forEach(i => tryCast(f, i)); castLead = 0;
+    if (lead > 0) {
+      for (let k = pb; k < pending.length; k++) { const job = pending[k], fn = job.fn; job.fn = () => { castLead = lead; try { fn(); } finally { castLead = 0; } }; }
+      for (let k = sb; k < strikes.length; k++) strikes[k].t += lead;
+      for (let k = bb; k < beams.length; k++) beams[k].windup = Math.max(0.02, beams[k].windup - lead);
+    }
+  }
+  else if (casts.length) casts.forEach(i => tryCast(f, i));
   else if (f.queued) { f.queued.t -= dt; if (f.queued.t <= 0) f.queued = null; else if (canCast(f, f.queued.i)) tryCast(f, f.queued.i); }
   if (!f.dash) f.face = f.aimMode === 'auto' ? (opp(f).x > f.x ? 1 : -1) : (Math.cos(f.aimAng) >= 0 ? 1 : -1);
   for (let i = 0; i < 5; i++) { f.cds[i] = Math.max(0, f.cds[i] - dt); f.fail[i] = Math.max(0, f.fail[i] - dt); }
@@ -683,6 +698,7 @@ function controlFighter(f, dt) {
   f.invuln = Math.max(0, f.invuln - dt); f.castAnim = Math.max(0, f.castAnim - dt);
   f.mana = Math.min(MANA_MAX, f.mana + MANA_REGEN * dt);
   f.ult = Math.min(ULT_MAX, f.ult + ULT_REGEN * dt);
+  if (opts.mode === 'practice' && !f.dummy) { f.mana = Math.min(MANA_MAX, f.mana + 40 * dt); f.ult = Math.min(ULT_MAX, f.ult + 30 * dt); }
   if (f.shield) { f.shield.t -= dt; if (f.shield.t <= 0) f.shield = null; }
   if (Math.abs(f.vx) > 40 && f.onGround) f.runPhase += dt * Math.abs(f.vx) / 28;
 }
@@ -911,6 +927,7 @@ function update(dt) {
   clock += dt;
   pollPadCapture();
   if (NET.on) netTick(dt);
+  if (PV.on) { previewUpdate(dt); return; }
   if (NET.on && NET.role === 'guest') { guestUpdate(dt); return; }
   stepParticles(dt);
   for (const t of texts) { t.life -= dt; t.y -= 40 * dt; }
@@ -1501,7 +1518,7 @@ function animEvents(f) {
   f.hitFlash = Math.max(0, (f.hitFlash || 0) - frameDt);
 }
 // Which fighter is "me" on this screen: my side online, the left fighter against the bot. Local 2-player: nobody.
-function isMine(f) { if (opts.mode === 'online') return NET.on && f.slot === NET.side; return opts.mode === 'bot' && f.slot === 0; }
+function isMine(f) { if (PV.on) return false; if (opts.mode === 'online') return NET.on && f.slot === NET.side; return (opts.mode === 'bot' || opts.mode === 'practice') && f.slot === 0; }
 function drawMineGlow(f) {
   const col = elCol(f.element), pulse = 0.5 + 0.5 * Math.sin(clock * 3.2), cy = f.y - 40;
   ctx.save();
@@ -1626,6 +1643,7 @@ function slotLabel(f, i) { if (f.isBot) return '·'; const sc = schemeFor(f.slot
 function drawHUD() {
   if (!fighters.length) return;
   fighters.forEach(f => {
+    if (f.dummy) return;
     const left = f.slot === 0, col = elCol(f.element);
     const px = left ? 20 : W - 20 - 380;
     ctx.textAlign = left ? 'left' : 'right';
@@ -1674,6 +1692,7 @@ function drawHUD() {
     }
   });
   ctx.textAlign = 'center';
+  if (opts.mode === 'practice') { ctx.fillStyle = C.ink; ctx.font = '400 30px Anton, Impact, sans-serif'; ctx.fillText('PRACTICE', W / 2, 44); ctx.fillStyle = C.soft; ctx.font = '600 14px "Bricolage Grotesque", system-ui, sans-serif'; ctx.fillText('Esc to pause or leave', W / 2, 64); return; }
   const t = Math.ceil(timeLeft), mm = Math.floor(t / 60), ss = String(t % 60).padStart(2, '0'), hurry = state === 'fight' && timeLeft <= 10;
   const tp = hurry ? 1 + Math.max(0, Math.cos((timeLeft % 1) * Math.PI * 2)) * 0.12 : 1;
   ctx.save(); ctx.translate(W / 2, 44); ctx.scale(tp, tp); ctx.fillStyle = hurry ? C.red : C.ink;
@@ -1702,7 +1721,7 @@ function drawBanner() {
   ctx.fillStyle = withA(C.ink, 0.25); ctx.fillText(txt, 5, 6);
   ctx.lineWidth = 10; ctx.lineJoin = 'round'; ctx.strokeStyle = C.paper; ctx.strokeText(txt, 0, 0);
   ctx.fillStyle = C.red; ctx.fillText(txt, 0, 0); ctx.restore(); ctx.globalAlpha = 1;
-  if (paused) { ctx.font = '400 20px Anton, Impact, "Arial Narrow", sans-serif'; ctx.fillStyle = C.ink; ctx.fillText('Press Esc or P to resume', W / 2, H / 2 + 34); }
+  if (paused) { ctx.font = '400 20px Anton, Impact, "Arial Narrow", sans-serif'; ctx.fillStyle = C.ink; ctx.fillText(opts.mode === 'practice' ? 'Esc to resume · Q to leave practice' : 'Press Esc or P to resume', W / 2, H / 2 + 34); }
   else if (state === 'countdown' && opts.mode === 'bot' && opts.aim === 'mouse' && countdown > 1.2) {
     ctx.font = '400 20px Anton, Impact, "Arial Narrow", sans-serif'; ctx.fillStyle = C.ink;
     ctx.fillText('Aim with the mouse', W / 2, H / 2 + 34);
@@ -1739,16 +1758,17 @@ function render() {
   drawTexts();
   fighters.forEach(drawAim);
   ctx.restore();
-  drawHUD();
-  drawBanner();
+  if (!PV.on) { drawHUD(); drawBanner(); }
   drawReconnect();
+  if (typeof exitBtn !== 'undefined') exitBtn.hidden = !(opts.mode === 'practice' && state === 'fight' && !PV.on);
   const aiming = fighting() && fighters.some(f => !f.isBot && f.aimMode === 'mouse');
   cv.classList.toggle('aiming', aiming);
 }
 
 function resize() {
-  const avail = document.getElementById('stage').clientWidth;
-  const maxH = Math.max(260, innerHeight - 150);
+  const host = cv.parentElement || document.getElementById('stage');
+  const avail = host.clientWidth || 600;
+  const maxH = host.id === 'stage' ? Math.max(260, innerHeight - 150) : 2000;
   const w = Math.max(300, Math.min(avail, maxH * 2));
   cv.style.width = w + 'px'; cv.style.height = (w / 2) + 'px';
   const dpr = Math.min(2, devicePixelRatio || 1);
@@ -2008,7 +2028,7 @@ function netTick(dt) {
     NET.sendT = 0.4;
     const c = compactPlan(NET.side), key = JSON.stringify(c);
     if (key !== NET.planKey) { NET.planKey = key; netPresence({ plan: c }); }
-    if (NET.role === 'host') netPresence({ snap: { st: state, rd: round, sc: fighters.map(f => [f.score, f.roundScore[0], f.roundScore[1]]) } });
+    if (NET.role === 'host') netPresence({ snap: { st: state, rd: round, sc: matchFighters().map(f => [f.score, f.roundScore[0], f.roundScore[1]]) } });
   }
   if (NET.role === 'host') {
     if ((state === 'prep' || state === 'half') && NET.ready === round + 1 && NET.oppReady === round + 1 && plan[0].result.valid && !plan[0].busy) startOnlineRound();
@@ -2066,7 +2086,8 @@ function buildSnap() {
     (f.onGround ? 1 : 0) | (f.stun > 0 ? 2 : 0) | (f.blind > 0 ? 4 : 0) | (f.slow > 0 ? 8 : 0) | (f.invuln > 0 ? 16 : 0) | (f.dash ? 32 : 0),
     f.shield ? [Math.round(f.shield.r), r1(f.shield.t), f.shield.reflect ? 1 : 0] : 0, r1(f.castAnim), r1(f.runPhase % 100),
     f.score, f.roundScore[0], f.roundScore[1], f.heads, f.bodies, f.bonus, EL_INDEX[f.element], f.stats.map(s => [s.casts, s.hits, s.pts]), Math.round(f.vy), f.orbit ? [f.orbit.n, Math.round(f.orbit.r), r1(f.orbit.ang), r1(f.orbit.or)] : 0, TYPE_IDS.indexOf(f.castType || 'projectile') + (f.castUlt ? 100 : 0), f.jumps, f.hitDir || 0]);
-  const snap = { st: state, rd: round, tl: r1(timeLeft), cd: r1(countdown), bn: banner > 0 ? [bannerText, r1(banner)] : 0, sh: Math.round(shake), f: F,
+  const oin = ((oppPeer() || {}).data || {}).in || {};
+  const snap = { aq: oin.q | 0, st: state, rd: round, tl: r1(timeLeft), cd: r1(countdown), bn: banner > 0 ? [bannerText, r1(banner)] : 0, sh: Math.round(shake), f: F,
     z: zones.map(z => [Math.round(z.x), Math.round(z.y), Math.round(z.r), EL_INDEX[z.el], r1(z.life), r1(z.max), r1(z.spin)]),
     b: beams.map(b => { const e = b.x1 === undefined ? rayEnd(b.x0, b.y0, b.ang) : { x: b.x1, y: b.y1 }; return [Math.round(b.x0), Math.round(b.y0), Math.round(e.x), Math.round(e.y), Math.round(b.thick), EL_INDEX[b.el], b.windup > 0 ? 1 : 0, r1(b.life)]; }),
     rg: rings.map(r => [Math.round(r.x), Math.round(r.y), Math.round(r.r), EL_INDEX[r.el], r1(r.life), r1(r.max), r.arc || 0]),
@@ -2095,15 +2116,21 @@ function guestApply(s) {
   const st = String(s.st || '');
   if (st === 'prep' || st === 'half') {
     const rd = Number(s.rd) || 0;
-    if (Array.isArray(s.sc) && fighters.length) s.sc.forEach((v, i) => { if (fighters[i] && Array.isArray(v)) { fighters[i].score = v[0] | 0; fighters[i].roundScore = [v[1] | 0, v[2] | 0]; } });
+    const MF = matchFighters(); if (Array.isArray(s.sc) && MF.length) s.sc.forEach((v, i) => { if (MF[i] && Array.isArray(v)) { MF[i].score = v[0] | 0; MF[i].roundScore = [v[1] | 0, v[2] | 0]; } });
     if (state !== st || round !== rd) { round = rd; NET.ready = 0; netPresence({ ready: 0, again: null }); if (st === 'prep' && fighters.length) fighters.forEach(f => { f.score = 0; f.roundScore = [0, 0]; f.heads = 0; f.bodies = 0; f.bonus = 0; }); showPrep(); }
     return;
   }
   if (st === 'countdown' || st === 'fight' || st === 'timeup') {
-    if (!fighting() && state !== 'timeup') { guestBuildFighters(); projectiles = []; beams = []; zones = []; rings = []; texts = []; particles = []; strikes = []; waves = []; traps = []; summons = []; flashes = []; pending = []; hideScreen(); NET.seenEv = 0; NET.lastIn = null; }
+    if (PV.on) stopPreview();
+    if (!fighting() && state !== 'timeup') { guestBuildFighters(); projectiles = []; beams = []; zones = []; rings = []; texts = []; particles = []; strikes = []; waves = []; traps = []; summons = []; flashes = []; pending = []; hideScreen(); NET.seenEv = 0; NET.lastIn = null; fighters.forEach(f => { f.ibuf = []; f.localCd = null; }); }
     state = st; round = Number(s.rd) || 0; timeLeft = Number(s.tl) || 0; countdown = Number(s.cd) || 0;
     if (Array.isArray(s.bn)) { bannerText = String(s.bn[0]).slice(0, 40); banner = Number(s.bn[1]) || 0; }
     shake = Math.max(shake, Number(s.sh) || 0);
+    if (s.aq && NET.sentAt && NET.sentAt[s.aq]) {
+      const sample = performance.now() - NET.sentAt[s.aq];
+      NET.rtt = NET.rtt ? NET.rtt * 0.8 + sample * 0.2 : sample;
+      for (const k in NET.sentAt) if (Number(k) <= s.aq) delete NET.sentAt[k];
+    }
     applyFighters(s.f);
     applyEntities(s);
     return;
@@ -2115,12 +2142,15 @@ function applyFighters(F) {
   F.forEach((a, i) => {
     const f = fighters[i]; if (!f || !Array.isArray(a)) return;
     f.tx = Number(a[0]) || 0; f.ty = Number(a[1]) || 0; if (f.x === 0 || Math.abs(f.tx - f.x) > 200) { f.x = f.tx; f.y = f.ty; }
+    if (NET.role === 'guest' && i !== NET.side) { const B = f.ibuf = f.ibuf || []; const t = performance.now(); if (!B.length || B[B.length - 1].x !== f.tx || B[B.length - 1].y !== f.ty || t - B[B.length - 1].t > 60) B.push({ t, x: f.tx, y: f.ty }); if (B.length > 24) B.shift(); }
     const predicted = NET.role === 'guest' && i === NET.side && state === 'fight';
     f.svx = Number(a[2]) || 0; if (!predicted) f.vx = f.svx; f.face = a[3] < 0 ? -1 : 1; f.aimAng = Number(a[4]) || 0; f.mana = Number(a[5]) || 0; f.ult = Number(a[6]) || 0;
-    if (Array.isArray(a[7])) f.cds = a[7].map(Number);
+    if (Array.isArray(a[7])) { f.cds = a[7].map(Number); const lc = f.localCd; if (lc && performance.now() < lc.until && (f.cds[lc.i] || 0) < 0.05 && lc.cd) f.cds[lc.i] = lc.cd; }
     const fl = a[8] | 0; f.sground = !!(fl & 1); if (!predicted) f.onGround = f.sground; f.stun = fl & 2 ? 0.1 : 0; f.blind = fl & 4 ? 0.1 : 0; f.slow = fl & 8 ? 0.1 : 0; f.invuln = fl & 16 ? 0.1 : 0; f.dash = fl & 32 ? { vx: f.vx, vy: 0 } : null;
     f.shield = Array.isArray(a[9]) ? { r: Number(a[9][0]), t: Number(a[9][1]), reflect: !!a[9][2] } : null;
-    f.castAnim = Number(a[10]) || 0; if (!predicted) f.runPhase = Number(a[11]) || 0;
+    const nowT = performance.now();
+    if (!(predicted && f.localCastUntil > nowT)) f.castAnim = Number(a[10]) || 0;
+    if (!predicted) f.runPhase = Number(a[11]) || 0;
     f.score = a[12] | 0; f.roundScore = [a[13] | 0, a[14] | 0]; f.heads = a[15] | 0; f.bodies = a[16] | 0; f.bonus = a[17] | 0;
     const el = EL_IDS[a[18]]; if (el) f.element = el;
     if (Array.isArray(a[19])) f.stats = a[19].map(v => ({ casts: v[0] | 0, hits: v[1] | 0, pts: v[2] | 0 }));
@@ -2156,7 +2186,7 @@ function guestUpdate(dt) {
   banner = Math.max(0, banner - dt);
   if (!fighting() && state !== 'timeup') { pressed.clear(); return; }
   const mine = fighters[NET.side];
-  for (const f of fighters) { if (f !== mine && f.tx !== undefined) { f.x += (f.tx - f.x) * Math.min(1, dt * 18); f.y += (f.ty - f.y) * Math.min(1, dt * 18); } }
+  for (const f of fighters) { if (f !== mine && f.tx !== undefined) interpolateOpp(f, dt); }
   if (mine) predictMine(mine, dt);
   for (const p of projectiles) { p.x += Math.cos(p.ang) * p.sp * dt; p.y += Math.sin(p.ang) * p.sp * dt; p.t += dt; if (Math.random() < 0.5) trailParticle(p.x, p.y, p.el, p.ang, p.sp); }
   for (const z of zones) z.spin += dt * 6;
@@ -2167,6 +2197,25 @@ function guestUpdate(dt) {
   for (const r of rings) r.life -= dt;
   rings = rings.filter(r => r.life > 0);
   const me = fighters[NET.side]; if (me) for (let i = 0; i < 5; i++) me.fail[i] = Math.max(0, me.fail[i] - dt);
+}
+// Show the opponent ~70 ms in the past, blending between the two snapshots around that moment.
+// Snapshots arrive unevenly over the internet; this turns them into steady motion instead of jumps.
+const INTERP_MS = 70;
+function interpolateOpp(f, dt) {
+  const B = f.ibuf;
+  if (!B || B.length < 2) { f.x += (f.tx - f.x) * Math.min(1, dt * 18); f.y += (f.ty - f.y) * Math.min(1, dt * 18); return; }
+  const rt = performance.now() - INTERP_MS;
+  let x, y;
+  if (rt <= B[0].t) { x = B[0].x; y = B[0].y; }
+  else if (rt >= B[B.length - 1].t) {
+    const L = B[B.length - 1], ex = Math.min(0.08, (rt - L.t) / 1000); // brief extrapolation if a snapshot is late
+    x = L.x + (f.svx || 0) * ex; y = L.y + Math.min(0, f.svy || 0) * ex;
+  } else {
+    let k = B.length - 1; while (k > 0 && B[k - 1].t > rt) k--;
+    const a = B[k - 1], b = B[k], u = (rt - a.t) / Math.max(1, b.t - a.t);
+    x = a.x + (b.x - a.x) * u; y = a.y + (b.y - a.y) * u;
+  }
+  if (Math.abs(x - f.x) > 220) { f.x = x; f.y = y; } else { const s = Math.min(1, dt * 30); f.x += (x - f.x) * s; f.y += (y - f.y) * s; }
 }
 // Client-side prediction for the guest: run my own movement locally with my own input so it feels instant,
 // while the host stays in charge. The local copy is pulled gently toward the host's position and snapped if far off.
@@ -2193,6 +2242,7 @@ function predictMine(f, dt) {
   const err = Math.sqrt(best);
   if (err > 140) { f.x = f.tx; f.y = f.ty; f.pvx = f.svx; f.pvy = f.svy; H.length = 0; }
   else if (err > 4) { const k = Math.min(1, dt * (err > 50 ? 8 : 3)); f.x += bx * k; f.y += by * k; for (const h of H) { h[0] += bx * k; h[1] += by * k; } }
+  if (f.localCastUntil > performance.now()) f.castAnim = Math.max(0, f.castAnim - dt);
   // drive the animation from the predicted motion
   f.vx = f.pvx; f.vy = f.pvy; f.onGround = f.pground; f.jumps = f.pjumps;
   if (Math.abs(f.vx) > 40 && f.onGround) f.runPhase = (f.predPhase = (f.predPhase || 0) + dt * Math.abs(f.vx) / 28);
@@ -2202,11 +2252,20 @@ function guestSendInput() {
   pressed.clear();
   if (r.wantJump) NET.inC.j++;
   r.casts.forEach(i => { NET.inC.m[i]++; });
-  const inp = { ax: r.ax, jh: r.jumpHeld ? 1 : 0, dr: r.drop ? 1 : 0, j: NET.inC.j, m: NET.inC.m.slice() };
+  const me = fighters[NET.side], now = performance.now();
+  if (me && state === 'fight') r.casts.forEach(i => {
+    const m = me.moves[i]; if (!m || me.stun > 0 || me.blind > 0) return;
+    if (m.ult ? me.ult < ULT_MAX : (me.cds[i] > 0 || me.mana < m.mana_cost)) return;
+    // play the cast pose and start the cooldown right away; the host's version arrives a moment later
+    me.castType = m.type; me.castUlt = !!m.ult; me.castAnim = me.castDur = CAST_DUR[m.type] || 0.28;
+    me.localCastUntil = now + 350; me.localCd = { i, cd: m.ult ? 0 : m.cooldown, until: now + (NET.rtt || 120) + 200 };
+    burstParticles(me.x + me.face * 16, chestY(me), me.element, m.ult ? 16 : 6, 160);
+  });
+  const inp = { ax: r.ax, jh: r.jumpHeld ? 1 : 0, dr: r.drop ? 1 : 0, j: NET.inC.j, m: NET.inC.m.slice(), lt: Math.round((NET.rtt || 0) / 20) * 20 };
   if (r.pad && r.pad.aim) inp.s = [Math.round(r.pad.aim.x * 100), Math.round(r.pad.aim.y * 100)];
   else if (opts.aim === 'mouse') inp.a = [Math.round(mouse.x), Math.round(mouse.y)];
   const key = JSON.stringify(inp);
-  if (key !== NET.lastInKey) { NET.lastInKey = key; netPresence({ in: inp }, true); }
+  if (key !== NET.lastInKey) { NET.lastInKey = key; inp.q = NET.inSeq = (NET.inSeq || 0) + 1; (NET.sentAt = NET.sentAt || {})[inp.q] = performance.now(); netPresence({ in: inp }, true); }
   NET.lastIn = r;
 }
 
@@ -2365,8 +2424,8 @@ function togglePause() {
   paused = !paused; down.clear(); pressed.clear();
 }
 function newPlan(el) {
-  const raw = deep(DEFAULTS[el]);
-  return { element: el, raw, text: JSON.stringify(raw, null, 2), editing: false, result: validate(raw, el), ultDesc: DEFAULT_ULT_DESC[el], busy: false, status: null, open: new Set() };
+  const ids = loadoutIds(el), raw = loadoutRaw(el, ids);
+  return { element: el, ids, raw, text: JSON.stringify(raw, null, 2), editing: false, result: validate(raw, el), ultDesc: DEFAULT_ULT_DESC[el], busy: false, status: null, open: new Set() };
 }
 // ---------- bot loadouts ----------
 // The bot rolls a fresh kit every time: a ranged poke, a second threat, a utility move and a wildcard,
@@ -2457,6 +2516,7 @@ function changeElement(side, el) {
   showPrep();
 }
 function startRound() {
+  if (PV.on) stopPreview();
   if (!plan.every(p => p.result.valid) || plan.some(p => p.busy)) return;
   fighters.forEach((f, i) => { f.element = plan[i].element; resetFighter(f, deep(plan[i].result.moves)); });
   projectiles = []; beams = []; zones = []; rings = []; particles = []; texts = []; strikes = []; waves = []; traps = []; summons = []; flashes = []; pending = []; fx = [];
@@ -2472,8 +2532,19 @@ function afterRound() {
 
 /* ---------- screens ---------- */
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' }[c]));
-function showScreen(html) { screenEl.innerHTML = html; screenEl.hidden = false; }
-function hideScreen() { screenEl.hidden = true; screenEl.innerHTML = ''; }
+function placeCanvas() {
+  const pv = screenEl.hidden ? null : screenEl.querySelector('.pv-stage'), stage = document.getElementById('stage');
+  const target = pv || stage;
+  if (cv.parentElement !== target) { target.appendChild(cv); }
+  resize();
+}
+function showScreen(html) {
+  const keepPreview = /class="pv-stage"/.test(html);
+  if (!keepPreview && PV.on) stopPreview();
+  screenEl.innerHTML = html; screenEl.hidden = false; placeCanvas();
+}
+function hideScreen() { if (PV.on) stopPreview(); screenEl.hidden = true; screenEl.innerHTML = ''; placeCanvas(); }
+function clearArena() { projectiles = []; beams = []; zones = []; rings = []; particles = []; texts = []; strikes = []; waves = []; traps = []; summons = []; flashes = []; pending = []; fx = []; banner = 0; }
 
 function segButtons(key, items) {
   return items.map(([v, label]) => `<button data-set="${key}:${v}" aria-pressed="${String(opts[key]) === String(v)}">${label}</button>`).join('');
@@ -2484,31 +2555,6 @@ function elButtons(side) {
 function bindSummary(sc) {
   const b = binds[sc], k = a => b[a].map(c => `<kbd>${esc(keyName(c))}</kbd>`).join(' or ');
   return `${k('left')} ${k('right')} move, ${k('jump')} jump (tap again in the air to double jump, hold for higher), ${k('drop')} drop or fast fall. Moves: ${['m1', 'm2', 'm3', 'm4'].map(k).join(', ')}. Ultimate: ${k('m5')}.`;
-}
-function showMenu() {
-  if (NET.on) netStop();
-  state = 'menu'; paused = false; capture = null;
-  const solo = opts.mode !== 'pvp', online = opts.mode === 'online';
-  showScreen(`<div class="narrow">
-    <h1 class="title">Stick V1</h1>
-    <p class="lede">Ten elements. Build four moves and an ultimate yourself. Fight two rounds with a half-time break to rework your moves. Head hits score 2, body hits score 1.</p>
-    <div class="opt"><span>Mode</span><div class="seg">${segButtons('mode', [['bot', 'Me vs bot'], ['online', 'Online with a code']])}</div></div>
-    <div class="opt"><span>${solo ? 'Your element' : 'Player 1'}</span><div>${elButtons(0)}</div></div>
-    ${online ? '' : solo ? `<div class="opt"><span>Bot element</span><span class="note">The bot picks its own element and moves at random every match.</span></div>` : `<div class="opt"><span>Player 2</span><div>${elButtons(1)}</div></div>`}
-    ${solo ? `<div class="opt"><span>Aiming</span><div class="seg">${segButtons('aim', [['auto', 'Auto-aim'], ['mouse', 'Aim with mouse']])}</div></div>` : ''}
-    ${opts.mode === 'bot' ? `<div class="opt"><span>Bot skill</span><div class="seg">${segButtons('level', [['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']])}</div></div>` : ''}
-    <div class="opt"><span>Round length</span><div class="seg">${segButtons('roundLen', [[120, '2:00'], [60, '1:00'], [30, '0:30']])}</div>${online ? '<span></span><span class="note">The host’s round length is used.</span>' : ''}</div>
-    <div class="go"><button class="cta" data-action="${online ? 'lobby' : 'setup'}">${online ? 'Go online' : 'Go to prep time'}</button><button data-action="controls">Controls</button>${STANDALONE ? '<button data-action="settings">Settings</button>' : ''}</div>
-    <div class="controls">
-      <table>
-        ${solo
-          ? `<tr><td>You</td><td>${opts.aim === 'mouse' ? 'Aim with the mouse. ' : 'Attacks aim at your opponent automatically. '}${bindSummary(soloScheme())}</td></tr>`
-          : `<tr><td>Player 1</td><td>${bindSummary('duo1')}</td></tr><tr><td>Player 2</td><td>${bindSummary('duo2')}</td></tr>`}
-        <tr><td>Controller</td><td>PlayStation or Xbox: left stick or d-pad to move, right stick to aim (optional). Buttons: ${padSummary()}.</td></tr>
-        <tr><td>Anytime</td><td><kbd>Esc</kbd>, <kbd>P</kbd> or the controller’s menu button pauses (not online)</td></tr>
-      </table>
-    </div>
-  </div>`);
 }
 function padSummary() { const b = binds.pad, k = a => (b[a] || []).map(i => `<kbd>${esc(padName(i))}</kbd>`).join(' or ') || 'not set'; return `${k('jump')} jump, ${k('m1')}, ${k('m2')}, ${k('m3')}, ${k('m4')} moves, ${k('m5')} ultimate`; }
 
@@ -2695,26 +2741,6 @@ function botColumn(side, half) {
     ${half && f ? `<div class="vs-score">Bot round 1 score ${f.roundScore[0]}</div>` : ''}
   </section>`;
 }
-function prepColumn(side, half) {
-  if (isBotSide(side)) return botColumn(side, half);
-  const p = plan[side], el = p.element, f = fighters[side];
-  if (p.result.moves.length !== 5) p.result = { ...validate(deep(DEFAULTS[el]), el), errors: p.result.errors, valid: false };
-  return `<section class="col" style="--el: var(--el-${el})">
-    <div class="col-head"><h2>${elName(el)}</h2><span class="who">${esc(sideLabel(side))}${half && f ? `, round 1 score ${f.roundScore[0]}` : ''}</span></div>
-    ${`<label class="note" style="display:block;margin-top:6px">Element <select data-elsel="${side}">${EL_IDS.map(id => `<option value="${id}" ${id === el ? 'selected' : ''}>${ELEMENTS[id].name}</option>`).join('')}</select></label>`}
-    <p class="passive"><b>${elName(el)}:</b> ${esc(ELEMENTS[el].passive)}</p>
-    <div class="budget" data-budget="${side}">${budgetHTML(side)}</div>
-    <div class="moves">
-      ${[0, 1, 2, 3].map(i => `<article class="move"><div data-summary="${side}:${i}">${summaryHTML(side, i, half)}</div>${builderHTML(side, i)}</article>`).join('')}
-      <article class="move ult"><div data-summary="${side}:4">${summaryHTML(side, 4, half)}</div>${builderHTML(side, 4)}</article>
-    </div>
-    <div data-msgs="${side}">${msgsHTML(side)}</div>
-    <div class="edit-row adv">
-      <button data-action="trim" data-side="${side}">Trim moves to fit budget</button>
-      <button class="ghost" data-action="reset" data-side="${side}">Reset to starting moves</button>
-    </div>
-  </section>`;
-}
 function startOK() { return plan.every(p => p.result.valid) && !plan.some(p => p.busy); }
 function startRowHTML() {
   const ok = startOK(), half = round === 1;
@@ -2735,11 +2761,12 @@ function showPrep() {
     <div class="prep-head">
       <div>
         <h2>${half ? 'Half time' : 'Prep time'}</h2>
-        <p>${half ? 'See what landed in round 1, then tune your moves or rebuild your ultimate. Mana and the ultimate meter reset for round 2.' : 'Open “Build this move yourself” on any move to change it with sliders. Press Build on your ultimate to shape it the same way.'}</p>
+        <p>${half ? 'See what landed in round 1, then swap moves if you want. Mana and the ultimate meter reset for round 2.' : 'Pick your element and swap in any moves you own. Press Watch to see a move in action.'}</p>
       </div>
       <button class="ghost" data-action="menu">${opts.mode === 'online' ? 'Leave game' : 'Back to menu'}</button>
     </div>
     ${opts.mode === 'online' ? `<p class="note">Online game ${esc(NET.code)}. You are ${NET.side === 0 ? 'the host, on the left' : 'on the right'}.</p>` : ''}
+    ${prepPreviewHTML()}
     <div class="cols">${opts.mode === 'online' ? (NET.side === 0 ? prepColumn(0, half) + `<section class="col" data-opp>${oppPanelInner()}</section>` : `<section class="col" data-opp>${oppPanelInner()}</section>` + prepColumn(1, half)) : prepColumn(0, half) + prepColumn(1, half)}</div>
     <details>
       <summary>How costs and interactions work</summary>
@@ -2757,6 +2784,7 @@ function showPrep() {
   </div>`);
   screenEl.scrollTop = y;
   refreshForgeUI();
+  if (PREP_PV) { const p = plan[PREP_PV.side], m = p && p.result.moves[PREP_PV.slot]; if (m) startPreview(m, p.element); }
 }
 function patchSide(side) {
   const half = round === 1, p = plan[side];
@@ -2825,6 +2853,11 @@ screenEl.addEventListener('toggle', e => {
 }, true);
 screenEl.addEventListener('input', e => {
   const t = e.target;
+  if (t.dataset.bd && BUILD.draft) {
+    draftEdit(t.dataset.bd, t.value);
+    if (t.type === 'range') { const o = t.parentElement.querySelector('output'); if (o) o.textContent = t.value; }
+    return;
+  }
   if (t.dataset.ult !== undefined) { plan[Number(t.dataset.ult)].ultDesc = t.value; return; }
   if (t.dataset.edit && t.type === 'range') {
     const [s, i, field] = t.dataset.edit.split(':');
@@ -2834,6 +2867,8 @@ screenEl.addEventListener('input', e => {
 });
 screenEl.addEventListener('change', e => {
   const t = e.target;
+  if (t.dataset.bd && BUILD.draft) { draftEdit(t.dataset.bd, t.value); const y = screenEl.scrollTop; showBuild(); screenEl.scrollTop = y; return; }
+  if (t.dataset.swap) { const [sd, sl] = t.dataset.swap.split(':').map(Number); applySwap(sd, sl, t.value); return; }
   if (t.dataset.elsel !== undefined) { changeElement(Number(t.dataset.elsel), t.value); return; }
   if (t.dataset.edit && t.type !== 'range') { const [s, i, field] = t.dataset.edit.split(':'); applyEdit(Number(s), Number(i), field, t.value); }
 });
@@ -2844,18 +2879,41 @@ screenEl.addEventListener('click', e => {
   if (btn.dataset.set) {
     const [k, v] = btn.dataset.set.split(':');
     opts[k] = k === 'roundLen' ? Number(v) : v;
-    showMenu(); updateLegend();
+    if (state === 'practice-menu') showPracticeMenu(); else if (state === 'play') showPlay(); else showMenu(); updateLegend();
     return;
   }
   if (btn.dataset.netpick) { const keep = {}; screenEl.querySelectorAll('[data-setting]').forEach(i => { keep[i.dataset.setting] = i.value; }); settings.net = btn.dataset.netpick; showSettings(); Object.entries(keep).forEach(([k, v]) => { const i = screenEl.querySelector(`[data-setting="${k}"]`); if (i) i.value = v; }); return; }
-  if (btn.dataset.el) {
-    const [s, id] = btn.dataset.el.split(':'); sideEls[Number(s)] = id;
-    showMenu(); return;
-  }
+  if (btn.dataset.pel) { sideEls[0] = btn.dataset.pel; showPracticeMenu(); return; }
+  if (btn.dataset.bel) { BUILD.el = btn.dataset.bel; BUILD.pv = null; BUILD.draft = null; showBuild(); return; }
+  if (btn.dataset.prepel) { const [sd, id] = btn.dataset.prepel.split(':'); PREP_PV = null; if (Number(sd) === 0 || opts.mode === 'online') sideEls[0] = id; changeElement(Number(sd), id); return; }
+  if (btn.dataset.pvid) { const id = btn.dataset.pvid; BUILD.pv = { id, ult: !!libraryFor(BUILD.el).ults.find(x => x.id === id) }; BUILD.draft = null; showBuild(); return; }
+  if (btn.dataset.pvslot) { const [sd, sl] = btn.dataset.pvslot.split(':').map(Number); PREP_PV = { side: sd, slot: sl }; showPrep(); screenEl.scrollTop = 0; return; }
   const side = Number(btn.dataset.side);
   switch (btn.dataset.action) {
     case 'setup': setupMatch(); updateLegend(); break;
-    case 'lobby': NET.status = ''; showLobby(); break;
+    case 'play': showPlay(); break;
+    case 'practice': showPracticeMenu(); break;
+    case 'build': BUILD.el = sideEls[0]; BUILD.pv = null; BUILD.draft = null; showBuild(); break;
+    case 'start-bot': opts.mode = 'bot'; PREP_PV = null; setupMatch(); updateLegend(); break;
+    case 'practice-start': startPractice(); break;
+    case 'pv-close': PREP_PV = null; showPrep(); break;
+    case 'bnew': newDraft(false); showBuild(); break;
+    case 'bnewult': newDraft(true); showBuild(); break;
+    case 'bwatch': BUILD.pv = { draft: true, ult: BUILD.draft.ult, raw: deep(BUILD.draft.raw) }; showBuild(); break;
+    case 'bcancel': BUILD.draft = null; BUILD.pv = null; showBuild(); break;
+    case 'bsave': {
+      const d = BUILD.draft, el = BUILD.el, id = 'c' + Date.now().toString(36);
+      const m = normalize(deep(d.raw), el, d.ult ? 4 : 0, [], []);
+      (LIB.custom[el] = LIB.custom[el] || []).push({ id, ult: d.ult, raw: toRaw(m) }); saveLib();
+      BUILD.draft = null; BUILD.pv = { id, ult: d.ult }; showBuild(); break;
+    }
+    case 'bdel': {
+      const el = BUILD.el, id = BUILD.pv && BUILD.pv.id; if (!id) break;
+      LIB.custom[el] = (LIB.custom[el] || []).filter(c => c.id !== id);
+      if (LIB.loadout[el]) LIB.loadout[el] = LIB.loadout[el].map((x, k) => x === id ? (k === 4 ? 'du' : 'd' + k) : x);
+      saveLib(); BUILD.pv = null; showBuild(); break;
+    }
+    case 'lobby': opts.mode = 'online'; NET.status = ''; showLobby(); break;
     case 'host': netStart('host', makeCode()); break;
     case 'join': {
       const inp = screenEl.querySelector('[data-joincode]'); const code = (inp ? inp.value : '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -2894,7 +2952,7 @@ screenEl.addEventListener('click', e => {
       p.status = fitted.notes.length ? { kind: 'ok', text: fitted.notes.join(' ') } : { kind: 'ok', text: 'Everything already fits the budget.' };
       showPrep(); break;
     }
-    case 'reset': { if (plan[side].ctl) plan[side].ctl.abort(); plan[side] = newPlan(plan[side].element); showPrep(); break; }
+    case 'reset': { const el = plan[side].element; delete LIB.loadout[el]; saveLib(); plan[side] = newPlan(el); if (opts.mode === 'online' && NET.ready) setReady(false); showPrep(); break; }
     case 'ask-rematch': netPresence({ again: Date.now() }); showResults(); break;
     case 'rematch': {
       if (opts.mode === 'online') { const od = (oppPeer() || {}).data || {}; NET.lastAgain = od.again; round = 0; fighters.forEach(f => { f.score = 0; f.roundScore = [0, 0]; f.heads = 0; f.bodies = 0; f.bonus = 0; }); NET.ready = 0; netPresence({ ready: 0 }); showPrep(); break; }
@@ -2915,6 +2973,271 @@ function updateLegend() {
 }
 
 function saveDescsNoop() {}
+/* ---------- move library + loadouts ----------
+   Every element has a library of moves: its 5 starters, a few extra presets borrowed from other elements and
+   re-skinned, and any custom moves the player made in Build. A loadout is 4 moves + 1 ultimate picked from it.
+   In matches players can only swap between moves they own; they can't edit stats there. */
+const LIB_KEY = 'stick-lib-v1';
+let LIB = (() => { try { const v = JSON.parse(localStorage.getItem(LIB_KEY) || 'null'); if (v && typeof v === 'object') return { custom: v.custom || {}, loadout: v.loadout || {} }; } catch (e) {} return { custom: {}, loadout: {} }; })();
+function saveLib() { try { localStorage.setItem(LIB_KEY, JSON.stringify(LIB)); } catch (e) {} }
+const EXTRA_CACHE = {};
+function extrasFor(el) {
+  if (EXTRA_CACHE[el]) return EXTRA_CACHE[el];
+  const own = new Set(DEFAULTS[el].slice(0, 4).map(m => m.type)), ei = EL_IDS.indexOf(el);
+  const pool = EL_IDS.filter(x => x !== el).flatMap(x => DEFAULTS[x].slice(0, 4)).filter(m => !own.has(m.type));
+  const regs = [], seenT = new Set();
+  for (let k = 0; regs.length < 4 && k < pool.length * 3; k++) {
+    const m = pool[Math.floor(hash(ei * 31 + k * 7.7) * pool.length)];
+    if (seenT.has(m.type)) continue; seenT.add(m.type);
+    const r = deep(m), n = regs.length;
+    r.name = `${BOT_WORDS[el][(ei + n) % 5]} ${BOT_NOUNS[r.type][(ei + n) % BOT_NOUNS[r.type].length]}`;
+    r.flavor = `${elName(el)} style. ${TYPE_HINTS[r.type].split('. ')[0].replace(/\.$/, '')}.`;
+    regs.push({ id: 'x' + n, raw: r, tag: 'Extra' });
+  }
+  const ults = EL_IDS.filter(x => x !== el).sort((a, b) => hash(ei * 13 + EL_IDS.indexOf(a)) - hash(ei * 13 + EL_IDS.indexOf(b))).slice(0, 2).map((x, n) => {
+    const r = deep(DEFAULTS[x][4]); r.name = `${BOT_WORDS[el][(ei + 3 + n) % 5]} ${BOT_NOUNS[r.type][n % BOT_NOUNS[r.type].length]}`;
+    r.flavor = `${elName(el)} ultimate. ${TYPE_HINTS[r.type].split('. ')[0].replace(/\.$/, '')}.`;
+    return { id: 'xu' + n, raw: r, tag: 'Extra' };
+  });
+  return (EXTRA_CACHE[el] = { regs, ults });
+}
+function libraryFor(el) {
+  const ex = extrasFor(el), custom = (LIB.custom[el] || []);
+  return {
+    regs: [...DEFAULTS[el].slice(0, 4).map((r, i) => ({ id: 'd' + i, raw: r, tag: 'Starter' })), ...ex.regs, ...custom.filter(c => !c.ult).map(c => ({ id: c.id, raw: c.raw, tag: 'Yours' }))],
+    ults: [{ id: 'du', raw: DEFAULTS[el][4], tag: 'Starter' }, ...ex.ults, ...custom.filter(c => c.ult).map(c => ({ id: c.id, raw: c.raw, tag: 'Yours' }))]
+  };
+}
+function libMove(el, id) { const L = libraryFor(el); return [...L.regs, ...L.ults].find(x => x.id === id) || null; }
+function loadoutIds(el) {
+  const ids = LIB.loadout[el], L = libraryFor(el), has = (id, ult) => (ult ? L.ults : L.regs).some(x => x.id === id);
+  if (Array.isArray(ids) && ids.length === 5 && ids.slice(0, 4).every(id => has(id, false)) && has(ids[4], true) && new Set(ids).size === 5) return ids.slice();
+  return ['d0', 'd1', 'd2', 'd3', 'du'];
+}
+function loadoutRaw(el, ids) { return (ids || loadoutIds(el)).map(id => deep(libMove(el, id).raw)); }
+
+/* ---------- screens: home, play, practice ---------- */
+function showMenu() {
+  if (NET.on) netStop();
+  state = 'menu'; paused = false; capture = null; fighters = []; clearArena();
+  showScreen(`<div class="home">
+    <h1 class="title">Stick V1</h1>
+    <p class="lede">Pick an element, fight with the moves you build. Head hits score 2, body hits score 1.</p>
+    <div class="home-cards">
+      <button class="home-card" data-action="play"><span class="hc-title">Play</span><span class="hc-sub">Against the bot or a friend online</span></button>
+      <button class="home-card" data-action="practice"><span class="hc-title">Practice</span><span class="hc-sub">Try your moves on a dummy</span></button>
+      <button class="home-card" data-action="build"><span class="hc-title">Build</span><span class="hc-sub">See every move, watch it, make your own</span></button>
+    </div>
+    <div class="home-links"><button class="ghost" data-action="controls">Controls</button>${STANDALONE ? '<button class="ghost" data-action="settings">Settings</button>' : ''}</div>
+  </div>`);
+}
+function showPlay() {
+  state = 'play';
+  showScreen(`<div class="narrow">
+    <div class="prep-head"><h2>Play</h2><button class="ghost" data-action="menu">Back</button></div>
+    <div class="play-grid">
+      <section class="play-card">
+        <h3>Against the bot</h3>
+        <p class="note">The bot picks a random element and kit. You choose your element and swap your moves in prep.</p>
+        <div class="opt"><span>Bot skill</span><div class="seg">${segButtons('level', [['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']])}</div></div>
+        <div class="opt"><span>Aiming</span><div class="seg">${segButtons('aim', [['auto', 'Auto-aim'], ['mouse', 'Mouse']])}</div></div>
+        <div class="opt"><span>Round length</span><div class="seg">${segButtons('roundLen', [[120, '2:00'], [60, '1:00'], [30, '0:30']])}</div></div>
+        <div class="go"><button class="cta" data-action="start-bot">Fight the bot</button></div>
+      </section>
+      <section class="play-card">
+        <h3>Online with a friend</h3>
+        <p class="note">One of you hosts and shares a 5-letter code, the other joins with it. You both pick your element and moves after joining.</p>
+        <div class="go"><button class="cta" data-action="lobby">Play online</button></div>
+      </section>
+    </div>
+  </div>`);
+}
+function elPicker(action, current) {
+  return `<div class="el-pick big">${EL_IDS.map(id => `<button style="--c: var(--el-${id})" data-${action}="${id}" aria-pressed="${current === id}">${ELEMENTS[id].name}</button>`).join('')}</div>`;
+}
+function showPracticeMenu() {
+  state = 'practice-menu';
+  const el = sideEls[0];
+  showScreen(`<div class="narrow">
+    <div class="prep-head"><h2>Practice</h2><button class="ghost" data-action="menu">Back</button></div>
+    <p class="note">Pick an element. You get your saved moves, endless mana and a fast ultimate, and a dummy to hit.</p>
+    ${elPicker('pel', el)}
+    <p class="passive" style="margin-top:10px"><b>${elName(el)}:</b> ${esc(ELEMENTS[el].passive)}</p>
+    <div class="opt"><span>Aiming</span><div class="seg">${segButtons('aim', [['auto', 'Auto-aim'], ['mouse', 'Mouse']])}</div></div>
+    <div class="go"><button class="cta" data-action="practice-start">Start practice</button></div>
+  </div>`);
+}
+function startPractice() {
+  opts.mode = 'practice'; NET.on = false;
+  const el = sideEls[0];
+  plan = [newPlan(el), null];
+  const me = makeFighter(0, el), dummy = makeFighter(1, randomOther(el));
+  resetFighter(me, plan[0].result.moves); resetFighter(dummy, []); dummy.dummy = true; dummy.x = W - 300;
+  fighters = [me, dummy]; clearArena(); round = 0;
+  timeLeft = Infinity; countdown = 0; state = 'fight'; paused = false; hitstop = 0; banner = 0.7; bannerText = 'Practice';
+  down.clear(); pressed.clear(); hideScreen(); updateLegend();
+}
+const exitBtn = document.createElement('button');
+exitBtn.className = 'exit-btn'; exitBtn.textContent = 'Leave practice'; exitBtn.hidden = true;
+exitBtn.addEventListener('click', () => leavePractice());
+document.getElementById('stage').appendChild(exitBtn);
+function leavePractice() { paused = false; opts.mode = 'bot'; fighters = []; clearArena(); showPracticeMenu(); }
+
+/* ---------- prep: pick element, swap moves you own ---------- */
+function swapSelect(side, slot) {
+  const p = plan[side], L = libraryFor(p.element), list = slot === 4 ? L.ults : L.regs, cur = p.ids[slot];
+  const taken = new Set(p.ids.filter((_, k) => k !== slot));
+  const opts2 = list.filter(x => !taken.has(x.id));
+  if (opts2.length < 2) return '';
+  return `<label class="swap">Swap <select data-swap="${side}:${slot}">${opts2.map(x => `<option value="${x.id}" ${x.id === cur ? 'selected' : ''}>${esc(x.raw.name)} · ${esc(x.raw.type)}${x.tag === 'Yours' ? ' ★' : ''}</option>`).join('')}</select></label>`;
+}
+function prepColumn(side, half) {
+  if (isBotSide(side)) return botColumn(side, half);
+  const p = plan[side], el = p.element, f = fighters[side];
+  if (!p.ids) p.ids = loadoutIds(el);
+  return `<section class="col" style="--el: var(--el-${el})">
+    <div class="col-head"><h2>${elName(el)}</h2><span class="who">${esc(sideLabel(side))}${half && f ? `, round 1 score ${f.roundScore[0]}` : ''}</span></div>
+    ${elPicker('prepel', el).replace(/data-prepel="/g, `data-prepel="${side}:`)}
+    <p class="passive"><b>${elName(el)}:</b> ${esc(ELEMENTS[el].passive)}</p>
+    <div class="budget" data-budget="${side}">${budgetHTML(side)}</div>
+    <div class="moves">
+      ${[0, 1, 2, 3, 4].map(i => `<article class="move ${i === 4 ? 'ult' : ''}"><div data-summary="${side}:${i}">${summaryHTML(side, i, half)}</div>
+        <div class="move-actions">${swapSelect(side, i)}<button class="ghost small" data-pvslot="${side}:${i}">Watch</button></div></article>`).join('')}
+    </div>
+    <div data-msgs="${side}">${msgsHTML(side)}</div>
+    <p class="note">Make more moves in <b>Build</b> from the main menu, then swap them in here.</p>
+    <div class="edit-row adv"><button class="ghost" data-action="reset" data-side="${side}">Use starter moves</button></div>
+  </section>`;
+}
+function applySwap(side, slot, id) {
+  const p = plan[side]; p.ids = p.ids.slice(); p.ids[slot] = id;
+  p.raw = loadoutRaw(p.element, p.ids); p.result = validate(p.raw, p.element); p.text = JSON.stringify(p.raw, null, 2);
+  if (p.result.valid) { LIB.loadout[p.element] = p.ids.slice(); saveLib(); }
+  if (opts.mode === 'online' && NET.ready) setReady(false);
+  showPrep();
+}
+
+/* ---------- build: browse, watch and make moves ---------- */
+const BUILD = { el: 'fire', pv: null, draft: null };
+function showBuild() {
+  state = 'build';
+  const el = BUILD.el, L = libraryFor(el), ids = loadoutIds(el);
+  const card = (x, ult) => `<button class="mcard ${BUILD.pv && BUILD.pv.id === x.id ? 'on' : ''}" data-pvid="${x.id}">
+      <span class="mc-top"><b>${esc(x.raw.name)}</b>${ids.includes(x.id) ? '<span class="eq">equipped</span>' : ''}</span>
+      <span class="mc-sub">${ult ? 'ultimate · ' : ''}${esc(x.raw.type)} · ${x.tag}</span></button>`;
+  const pv = BUILD.pv, pm = pv && (pv.draft ? normalize(deep(pv.raw), el, pv.ult ? 4 : 0, [], []) : (() => { const x = libMove(el, pv.id); return x ? normalize(deep(x.raw), el, pv.ult ? 4 : 0, [], []) : null; })());
+  showScreen(`<div class="wrap">
+    <div class="prep-head"><div><h2>Build</h2><p>Pick an element, click any move to watch it, or make your own.</p></div><button class="ghost" data-action="menu">Back</button></div>
+    ${elPicker('bel', el)}
+    <div class="build-grid" style="--el: var(--el-${el})">
+      <section class="col">
+        <div class="pv-stage"></div>
+        ${pm ? `<div class="pv-info"><h3>${esc(pm.name)}</h3>${pm.flavor ? `<p class="flavor">${esc(pm.flavor)}</p>` : ''}
+          <div class="statline"><span>Type <b>${esc(pm.type)}</b></span><span>Damage <b>${pm.stats.damage}</b></span><span>Speed <b>${pm.stats.speed}</b></span><span>Size <b>${pm.stats.size}</b></span><span>Count <b>${pm.stats.count}</b></span><span>Duration <b>${pm.stats.duration}</b></span></div>
+          <div>${pm.effects.map(e => `<span class="fx">${esc(e.type)} ${e.strength}</span>`).join('') || '<span class="kind">no effects</span>'}</div>
+          <div class="costs">${pm.ult ? `<span>Build ${pm.build_cost} of ${ULT_BUDGET}</span>` : `<span>Cooldown ${pm.cooldown}s</span><span>Build ${pm.build_cost}</span><span class="mana">${pm.mana_cost} mana</span>`}</div>
+          ${!pv.draft && pv.id.startsWith('c') ? `<div class="edit-row"><button class="ghost" data-action="bdel">Delete this move</button></div>` : ''}</div>`
+        : `<p class="note pv-empty">Click a move on the right to watch what it does.</p>`}
+        ${BUILD.draft ? draftHTML() : `<div class="edit-row"><button class="cta" data-action="bnew">Make a new move</button><button data-action="bnewult">Make a new ultimate</button>
+          <button class="ghost" disabled title="Coming in the next update">Describe it to the AI (soon)</button></div>`}
+      </section>
+      <section class="col">
+        <h3>${elName(el)} moves</h3>
+        <div class="mgrid">${L.regs.map(x => card(x, false)).join('')}</div>
+        <h3 style="margin-top:14px">Ultimates</h3>
+        <div class="mgrid">${L.ults.map(x => card(x, true)).join('')}</div>
+        <p class="note" style="margin-top:12px">Equip moves in prep time before a match (Play or Practice uses your saved loadout).</p>
+      </section>
+    </div>
+  </div>`);
+  if (pm) startPreview(pm, el);
+}
+function newDraft(ult) {
+  const base = ult ? deep(DEFAULTS[BUILD.el][4]) : { name: 'My move', type: 'projectile', stats: { damage: 3, speed: 6, size: 3, count: 1, duration: 0 }, effects: [], cooldown: 3, mana_overcharge: 0, visual: { shape: 'orb' } };
+  base.name = ult ? 'My ultimate' : base.name; base.flavor = '';
+  BUILD.draft = { ult, raw: base };
+  BUILD.pv = { draft: true, ult, raw: base };
+}
+function draftHTML() {
+  const d = BUILD.draft, m = normalize(deep(d.raw), BUILD.el, d.ult ? 4 : 0, [], []), s = m.stats;
+  const over = d.ult ? m.build_cost > ULT_BUDGET : (m.mana_cost > 60 || m.build_cost > 40);
+  const rng = (f, label, min, max, val, step = 1) => `<label>${label} <output>${val}</output><input type="range" min="${min}" max="${max}" step="${step}" value="${val}" data-bd="${f}"></label>`;
+  const eff = n => { const e = m.effects[n]; return `<label>Effect ${n + 1}<select data-bd="eff${n}"><option value="">none</option>${Object.keys(EFFECT_COST).map(t => `<option ${e && e.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>${e ? rng('effs' + n, 'Strength', 1, 5, e.strength) : ''}`; };
+  return `<div class="draft"><h3>${d.ult ? 'New ultimate' : 'New move'}</h3>
+    <div class="bgrid">
+      <label class="wide">Name<input type="text" maxlength="26" value="${esc(m.name)}" data-bd="name"></label>
+      <label>Type<select data-bd="type">${Object.keys(TYPE_BASE).map(t => `<option ${m.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      <label>Look<select data-bd="shape">${SHAPES.map(t => `<option ${m.visual.shape === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      ${rng('damage', 'Damage', 0, 10, s.damage)}${rng('speed', 'Speed', 1, 10, s.speed)}${rng('size', 'Size', 1, 10, s.size)}${rng('count', 'Count', 1, 6, s.count)}${rng('duration', 'Duration', 0, 5, s.duration)}
+      ${d.ult ? '' : rng('cooldown', 'Cooldown (s)', 1, 10, m.cooldown) + rng('overcharge', 'Extra mana', 0, 40, m.mana_overcharge, 5)}
+      ${eff(0)}${eff(1)}
+    </div>
+    <p class="type-hint">${TYPE_HINTS[m.type]}</p>
+    <p class="${over ? 'status err' : 'note'}">${d.ult ? `Build ${m.build_cost} of ${ULT_BUDGET}` : `Build ${m.build_cost} · ${m.mana_cost} mana per cast`}${over ? (d.ult ? ' — too strong for an ultimate' : ' — too strong for one move (max 40 build, 60 mana)') : ''}</p>
+    <div class="edit-row"><button class="cta" data-action="bsave" ${over ? 'disabled' : ''}>Save move</button><button data-action="bwatch">Watch it</button><button class="ghost" data-action="bcancel">Cancel</button></div>
+  </div>`;
+}
+function draftEdit(field, value) {
+  const r = BUILD.draft.raw;
+  if (field === 'name') r.name = value || 'My move';
+  else if (field === 'type') r.type = value;
+  else if (field === 'shape') r.visual = { shape: value };
+  else if (field === 'cooldown') r.cooldown = Number(value);
+  else if (field === 'overcharge') r.mana_overcharge = Number(value);
+  else if (field === 'eff0' || field === 'eff1') { const n = Number(field.slice(3)); const list = [r.effects[0] || null, r.effects[1] || null]; list[n] = value ? { type: value, strength: (list[n] && list[n].strength) || 1 } : null; r.effects = list.filter(Boolean).filter((e, i, a) => a.findIndex(x => x.type === e.type) === i); }
+  else if (field === 'effs0' || field === 'effs1') { const e = r.effects[Number(field.slice(4))]; if (e) e.strength = Number(value); }
+  else r.stats[field] = Number(value);
+}
+
+/* ---------- live move preview: the real engine plays the move on a small stage ---------- */
+const PV = { on: false, t: 0, slot: 0, period: 2.6, stash: null };
+const matchFighters = () => (PV.stash ? PV.stash.fighters : fighters);
+function stopPreview() {
+  if (!PV.on) return;
+  PV.on = false; clearArena();
+  fighters = PV.stash ? PV.stash.fighters : []; PV.stash = null; paused = false;
+}
+function startPreview(m, el) {
+  if (!PV.on) PV.stash = { fighters };
+  const caster = makeFighter(0, el), dummy = makeFighter(1, randomOther(el));
+  const moves = m.ult ? [null, null, null, null, m] : [m];
+  resetFighter(caster, moves); resetFighter(dummy, []);
+  caster.isBot = false; dummy.dummy = true; caster.aimMode = 'auto';
+  fighters = [caster, dummy]; PV.slot = m.ult ? 4 : 0;
+  PV.period = ['zone', 'summon', 'orbit', 'trap', 'shield'].includes(m.type) ? 3.6 : m.ult ? 3.2 : 2.4; PV.t = 0.25;
+  PV.on = true; paused = false; clearArena();
+}
+function previewUpdate(dt) {
+  stepParticles(dt);
+  for (const t of texts) { t.life -= dt; t.y -= 40 * dt; } texts = texts.filter(t => t.life > 0);
+  for (const r of rings) r.life -= dt; rings = rings.filter(r => r.life > 0);
+  shake = Math.max(0, shake - dt * 40); banner = Math.max(0, banner - dt);
+  if (hitstop > 0) { hitstop -= dt; return; }
+  const [c, d] = fighters; if (!c || !d) return;
+  PV.t -= dt;
+  if (PV.t <= 0) {
+    clearArena(); const mv = c.moves; resetFighter(c, mv); resetFighter(d, []); c.x = 330; d.x = 950; c.ult = ULT_MAX; c.mana = MANA_MAX;
+    c.face = 1; d.face = -1; updateAim(c, null); tryCast(c, PV.slot); banner = 0; PV.t = PV.period;
+  }
+  for (const f of fighters) {
+    if (!f.dash) f.face = opp(f).x > f.x ? 1 : -1;
+    updateAim(f, null);
+    for (let i = 0; i < 5; i++) f.cds[i] = Math.max(0, f.cds[i] - dt);
+    f.stun = Math.max(0, f.stun - dt); f.blind = Math.max(0, f.blind - dt); f.slow = Math.max(0, f.slow - dt);
+    f.invuln = Math.max(0, f.invuln - dt); f.castAnim = Math.max(0, f.castAnim - dt);
+    if (f.shield) { f.shield.t -= dt; if (f.shield.t <= 0) f.shield = null; }
+    if (!f.dash && f.stun <= 0) f.vx *= Math.max(0, 1 - dt * 8);
+    physics(f, dt);
+  }
+  updateProjectiles(dt); updateBeams(dt); updateZones(dt); updateExtras(dt);
+}
+let PREP_PV = null;
+function prepPreviewHTML() {
+  if (!PREP_PV) return '';
+  const p = plan[PREP_PV.side]; const m = p && p.result.moves[PREP_PV.slot]; if (!m) return '';
+  return `<div class="prep-pv" style="--el: var(--el-${p.element})"><div class="pv-stage"></div><div class="pv-info"><h3>${esc(m.name)}</h3>${m.flavor ? `<p class="flavor">${esc(m.flavor)}</p>` : ''}<button class="ghost" data-action="pv-close">Close</button></div></div>`;
+}
+
 /* ---------- boot ---------- */
 if (/[?&]debug\b/.test(location.search)) window.__stick = { get state() { return state; }, get fighters() { return fighters; }, skip: () => { timeLeft = 0.01; } };
 resize();

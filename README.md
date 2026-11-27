@@ -2,6 +2,12 @@
 
 A stick-figure fighting game. Pick one of 10 elements, build four moves and an ultimate with sliders, then fight a bot (which picks its own random element and moves) or anyone online with a 5-letter code.
 
+## How it plays
+
+- **Play**: against the bot (it picks a random element and kit) or online with a friend by code. In prep you pick your element and swap between moves you own; stats can't be edited mid-match.
+- **Practice**: pick an element and try your moves on a dummy with endless mana.
+- **Build**: browse every element's moves, click any move to watch it in action, and make your own moves or ultimates with sliders. Saved moves show up in the swap lists in prep.
+
 ## Folder layout
 
 - `index.html`, `src/` — the game (`src/game.js` is the code, `src/style.css` the styles)
