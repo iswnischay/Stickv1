@@ -421,7 +421,7 @@ body.touch.in-fight canvas { border-radius: 0; border-width: 0; }
   background: rgba(10, 14, 20, 0.82); border: 2px solid var(--c, #fff); color: #fff; transition: transform 0.1s ease, background 0.1s ease; }
 .t-item b { display: block; font: 700 12px/1.15 var(--display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .t-item small { font: 700 11px var(--display); opacity: 0.75; }
-.t-item[data-i="0"] { left: -92px; top: 0; } .t-item[data-i="1"] { left: 0; top: -82px; } .t-item[data-i="2"] { left: 92px; top: 0; } .t-item[data-i="3"] { left: 0; top: 82px; }
+.t-item[data-i="0"] { left: 0; top: -82px; } .t-item[data-i="1"] { left: 92px; top: 0; } .t-item[data-i="2"] { left: 0; top: 82px; } .t-item[data-i="3"] { left: -92px; top: 0; }
 .t-item.sel { background: var(--c, #fff); color: #0a0e14; transform: scale(1.12); }
 .t-item.off { opacity: 0.4; }
 .t-btn { pointer-events: auto; font: 400 1rem var(--impact); letter-spacing: 0.04em; color: #fff; background: rgba(10, 14, 20, 0.7); border: 2px solid rgba(255, 255, 255, 0.5); border-radius: 999px; }
@@ -444,3 +444,26 @@ body.touch.in-fight canvas { border-radius: 0; border-width: 0; }
 body.touch button { min-height: 40px; }
 body.touch .bgrid input[type=range] { height: 32px; }
 body.touch .el-pick button { padding: 8px 14px; }
+
+/* right-thumb cluster: swipe pad with Jump and Dodge under it */
+.t-pad { --size: min(150px, 34vh); position: absolute; right: max(4vw, calc(env(safe-area-inset-right, 0px) + 12px)); bottom: calc(min(64px, 15vh) + 22px + env(safe-area-inset-bottom, 0px));
+  width: var(--size); height: var(--size); border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.22); background: rgba(255, 255, 255, 0.04); transition: box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease; }
+.t-arrow { position: absolute; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%; display: grid; place-items: center;
+  font: 700 16px var(--display); color: rgba(255, 255, 255, 0.45);
+  background: conic-gradient(color-mix(in srgb, var(--c, #fff) 45%, transparent) calc(var(--p, 1) * 360deg), rgba(255, 255, 255, 0.05) 0); transition: transform 0.15s ease, color 0.15s ease, box-shadow 0.15s ease; }
+.t-arrow[data-i="0"] { left: 50%; top: 13%; } .t-arrow[data-i="1"] { left: 87%; top: 50%; } .t-arrow[data-i="2"] { left: 50%; top: 87%; } .t-arrow[data-i="3"] { left: 13%; top: 50%; }
+.t-arrow.ready { color: #fff; background: var(--c, #fff); box-shadow: 0 0 14px 2px var(--c, #fff); transform: scale(1.08); }
+.t-padlabel { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font: 400 0.95rem var(--impact); letter-spacing: 0.05em; color: #fff; opacity: 0; transition: opacity 0.2s ease; }
+.t-pad.ult { border-color: var(--c, #fff); background: color-mix(in srgb, var(--c, #fff) 22%, transparent); animation: pad-glow 1s ease-in-out infinite; }
+.t-pad.ult .t-padlabel { opacity: 1; }
+.t-pad.wheel-open { opacity: 0.25; }
+@keyframes pad-glow { 0%, 100% { box-shadow: 0 0 10px 0 var(--c, #fff); } 50% { box-shadow: 0 0 34px 8px var(--c, #fff); } }
+.t-jump, .t-dodge { position: absolute; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); height: min(52px, 13vh); width: min(96px, 22vh); padding: 0; font-size: 0.95rem; background: rgba(10, 14, 20, 0.55); border-color: rgba(255, 255, 255, 0.35); }
+.t-jump { right: calc(max(4vw, calc(env(safe-area-inset-right, 0px) + 12px)) + min(104px, 24vh)); }
+.t-dodge { right: max(4vw, calc(env(safe-area-inset-right, 0px) + 12px)); }
+.t-jump.down, .t-dodge.down { background: rgba(255, 255, 255, 0.85); color: #0a0e14; transform: scale(0.95); }
+/* left-handed: the cluster moves to the left */
+body.lefty .t-pad { right: auto; left: max(4vw, calc(env(safe-area-inset-left, 0px) + 12px)); }
+body.lefty .t-dodge { right: auto; left: max(4vw, calc(env(safe-area-inset-left, 0px) + 12px)); }
+body.lefty .t-jump { right: auto; left: calc(max(4vw, calc(env(safe-area-inset-left, 0px) + 12px)) + min(104px, 24vh)); }
+body.touch.in-fight .exit-btn { display: none; }
