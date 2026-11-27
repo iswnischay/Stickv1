@@ -3274,9 +3274,9 @@ function placeCanvas() {
 function showScreen(html) {
   const keepPreview = /class="pv-stage"/.test(html);
   if (!keepPreview && PV.on) stopPreview();
-  screenEl.innerHTML = html; screenEl.hidden = false; document.body.classList.add('has-screen'); placeCanvas();
+  screenEl.innerHTML = html; screenEl.hidden = false; document.body.classList.add('has-screen'); placeCanvas(); updatePill();
 }
-function hideScreen() { if (PV.on) stopPreview(); screenEl.hidden = true; screenEl.innerHTML = ''; document.body.classList.remove('has-screen'); placeCanvas(); }
+function hideScreen() { if (PV.on) stopPreview(); screenEl.hidden = true; screenEl.innerHTML = ''; document.body.classList.remove('has-screen'); placeCanvas(); updatePill(); }
 function clearArena() { stains = []; projectiles = []; beams = []; zones = []; rings = []; particles = []; texts = []; strikes = []; waves = []; traps = []; summons = []; flashes = []; pending = []; fx = []; banner = 0; }
 
 function segButtons(key, items) {
@@ -3297,8 +3297,15 @@ function showSettings() {
   showScreen(`<div class="narrow">
     <h2>Settings</h2>
     <p class="note">Saved on this device only.</p>
-    ${RELAY_HTTP && ACC.user ? `<h3 style="margin-top:18px">Tester code</h3>
-    <p class="note">Have a tester code? Each time you enter it you get ${DL(500)}. You have ${DL(WALLET.balance)}.</p>
+    ${RELAY_HTTP && ACC.user ? `<h3 style="margin-top:18px">Doolers</h3>
+    <p class="note">You have ${DL(WALLET.balance)}. Doolers are what you spend to keep a move you made with AI (${DL(MOVE_PRICE)} each; slider edits are free).</p>
+    <ul class="earn-list">
+      <li><b>Beat the bot</b> on any level: you get one dooler for every hit you landed on it. Lose and you get nothing.</li>
+      <li><b>Beat a friend</b> online: you get the hits you landed minus the hits they landed. Half comes from the game and half from your friend’s balance (the game covers any odd one).</li>
+      <li>Head hits and body hits each count as one hit.</li>
+    </ul>
+    <h3 style="margin-top:18px">Tester code</h3>
+    <p class="note">Have a tester code? Each time you enter it you get ${DL(500)}.</p>
     <div class="code-row"><input data-coupon maxlength="40" placeholder="CODE" autocomplete="off" style="text-transform:none;letter-spacing:0.04em;width:14rem"><button data-action="redeem">Redeem</button></div>
     ${WALLET.couponMsg ? `<p class="status ${WALLET.couponMsg.kind}">${WALLET.couponMsg.text}</p>` : ''}` : ''}
     <h3 style="margin-top:18px">Effects</h3>
@@ -3595,30 +3602,28 @@ function showResults() {
   </div>`);
   settleDoolers(winner);
 }
-// Pay out once per finished match: bot wins by level, online wins via the server's match record.
+// Pay out once per finished match. Only a gain is shown; losses, draws and errors stay quiet.
+// Bot: one dooler per hit you landed, only when you win. Online: the winner gets (their hits - the loser's hits),
+// half from the loser and half from the game (the game covers any odd one).
+const hitCount = f => (f.heads | 0) + (f.bodies | 0);
 function settleDoolers(winner) {
-  const box = () => screenEl.querySelector('[data-dlres]');
-  const say = (html, cls) => { const b = box(); if (b) { b.innerHTML = html; b.className = 'dl-result ' + (cls || ''); } };
-  if (!RELAY_HTTP || !ACC.user) return;
+  const say = html => { const b = screenEl.querySelector('[data-dlres]'); if (b) { b.innerHTML = html; b.className = 'dl-result win'; } };
+  if (!RELAY_HTTP || !ACC.user || !winner) return;
   const key = opts.mode + ':' + (NET.mid || '') + ':' + fighters.map(f => f.score).join('-') + ':' + (settleDoolers.n = (settleDoolers.n || 0));
   if (settleDoolers.done === key) return; settleDoolers.done = key;
   if (opts.mode === 'bot') {
-    if (!winner || winner.slot !== 0) { say(`Win against the bot to earn doolers: Easy ${DL(30)} · Normal ${DL(60)} · Hard ${DL(100)}.`); return; }
-    say('Adding your doolers…');
-    walletCall('/wallet/bot', { level: opts.level }).then(r => {
-      if (!r) say('Couldn’t reach the doolers server.', 'err');
-      else if (r.ok) say(`+${DL(r.gained)} for beating the ${opts.level} bot. Balance ${DL(r.balance)}${r.capped ? ' (daily bot limit reached)' : ''}`, 'win');
-      else say(r.error === 'too_soon' ? 'That was quick! Bot rewards need at least a minute between wins.' : `No doolers this time. Balance ${DL(r.balance)}`);
+    if (winner.slot !== 0) return;
+    const hits = hitCount(fighters[0]); if (!hits) return;
+    walletCall('/wallet/bot', { level: opts.level, hits }).then(r => {
+      if (r && r.ok && r.gained > 0) say(`+${DL(r.gained)} for the ${r.gained === 1 ? 'hit' : 'hits'} you landed on the ${esc(opts.level)} bot`);
     });
   } else if (opts.mode === 'online' && NET.mid) {
-    const role = NET.role, winRole = !winner ? 'draw' : winner.slot === 0 ? 'host' : 'guest';
-    if (winRole === 'draw') { say('A draw: no doolers change hands.'); return; }
-    say('Settling doolers with your opponent…');
-    const report = (tries) => walletCall('/wallet/report', { match: NET.mid, role, winner: winRole }).then(r => {
-      if (!r) { say('Couldn’t reach the doolers server.', 'err'); return; }
-      if (r.settled) { const m = r.mine || 0; say(m > 0 ? `+${DL(m)} for the win (25 from your opponent, 25 from the game). Balance ${DL(WALLET.balance)}` : m < 0 ? `${DL(m)} — your opponent took 25 doolers. Balance ${DL(WALLET.balance)}` : 'No doolers changed hands.', m > 0 ? 'win' : m < 0 ? 'lose' : ''); walletRefresh().then(() => { const b = box(); if (b && m) b.innerHTML = b.innerHTML.replace(/Balance <span class="dl">[^<]*<\/span>/, 'Balance ' + DL(WALLET.balance)); }); }
-      else if (r.pending && tries > 0) { setTimeout(() => report(tries - 1), 2500); }
-      else if (r.pending) say('Waiting for your opponent’s game to confirm the result. If they left, the winner still gets 25 from the game shortly.');
+    const role = NET.role, winRole = winner.slot === 0 ? 'host' : 'guest';
+    const hits = { host: hitCount(fighters[0]), guest: hitCount(fighters[1]) };
+    const report = tries => walletCall('/wallet/report', { match: NET.mid, role, winner: winRole, hits }).then(r => {
+      if (!r) return;
+      if (r.settled) { const m = r.mine || 0; walletRefresh(); if (m > 0) say(`+${DL(m)} for the win (${hits.host > hits.guest ? hits.host - hits.guest : hits.guest - hits.host} more hits than your opponent)`); }
+      else if (r.pending && tries > 0) setTimeout(() => report(tries - 1), 2500);
     });
     report(6);
   }
@@ -3892,9 +3897,20 @@ function loadoutRaw(el, ids) { return (ids || loadoutIds(el)).map(id => deep(lib
 /* ---------- screens: home, play, practice ---------- */
 const needLogin = () => !!(window.StickAccount && window.StickAccount.available()) && !ACC.user;
 function updateTopbar() {
-  const el = document.getElementById('userchip'); if (!el) return;
-  el.innerHTML = ACC.user ? `<span class="uc-dot"></span>${esc(ACC.username ? '@' + ACC.username : 'Signing in…')}${RELAY_HTTP ? ` · ${DL(WALLET.balance)}` : ''}` : '';
-  el.hidden = !ACC.user;
+  const el = document.getElementById('userchip'); if (el) {
+    el.innerHTML = ACC.user ? `<span class="uc-dot"></span>${esc(ACC.username ? '@' + ACC.username : 'Signing in…')}` : '';
+    el.hidden = !ACC.user;
+  }
+  updatePill();
+}
+// Doolers balance, top-left: shown on the Build screen and on the results screen.
+function updatePill() {
+  const el = document.getElementById('dlpill'); if (!el) return;
+  const show = !!(RELAY_HTTP && ACC.user && WALLET.balance != null && !screenEl.hidden && (state === 'build' || state === 'results'));
+  el.hidden = !show; document.body.classList.toggle('has-pill', show); if (!show) { updatePill.last = WALLET.balance; return; }
+  el.innerHTML = `${DL(WALLET.balance)}<small>doolers</small>`;
+  if (updatePill.last != null && WALLET.balance > updatePill.last) { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
+  updatePill.last = WALLET.balance;
 }
 function showLogin() {
   state = 'login';
@@ -3914,7 +3930,7 @@ function showMenu() {
   if (ACC.user && !ACC.username) { showUsername(); return; }
   showScreen(`<div class="home">
     <div class="logo-mark">STICK<span class="vs">v</span><span class="one">1</span></div>
-    <p class="hero-sub">${ACC.username ? `Welcome back, <b>@${esc(ACC.username)}</b>.${RELAY_HTTP ? ` You have ${DL(WALLET.balance)} doolers.` : ''}` : 'Pick an element, fight with the moves you build.'} Head hits score 2, body hits 1.</p>
+    <p class="hero-sub">${ACC.username ? `Welcome back, <b>@${esc(ACC.username)}</b>.` : 'Pick an element, fight with the moves you build.'} Head hits score 2, body hits 1.</p>
     <div class="home-cards">
       <button class="home-card primary" data-action="play"><span class="hc-title">Play</span><span class="hc-sub">Bot or a friend online</span></button>
       <button class="home-card" data-action="practice"><span class="hc-title">Practice</span><span class="hc-sub">Try your moves on a dummy</span></button>
@@ -4034,7 +4050,7 @@ function showBuild() {
       <span class="mc-sub">${ult ? 'ultimate · ' : ''}${esc(x.raw.type)} · ${x.tag}</span></button>`;
   const pv = BUILD.pv, pm = pv && (pv.draft ? normalize(deep(pv.raw), el, pv.ult ? 4 : 0, [], []) : (() => { const x = libMove(el, pv.id); return x ? normalize(deep(x.raw), el, pv.ult ? 4 : 0, [], []) : null; })());
   showScreen(`<div class="wrap">
-    ${screenHead('Build', 'menu', `Pick an element, click a move to watch it, edit it, or make a new one with AI (${MOVE_PRICE} doolers to keep).${RELAY_HTTP && ACC.user ? ` You have ${DL(WALLET.balance)}.` : ''}`)}
+    ${screenHead('Build', 'menu', `Pick an element, click a move to watch it, edit it, or make a new one with AI (${MOVE_PRICE} doolers to keep).`)}
     ${elPicker('bel', el)}
     <div class="build-grid" style="--el: var(--el-${el})">
       <section class="col">

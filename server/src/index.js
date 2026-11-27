@@ -204,12 +204,13 @@ export class Quota {
 /* ---------- doolers: the in-game currency ----------
    Balances live here on the server (one Durable Object per player), never in the browser, so nobody can edit their own.
      GET  /wallet                          -> { balance }
-     POST /wallet/bot    { level }         -> win against the bot: easy 30, normal 60, hard 100
+     POST /wallet/bot    { level, hits }   -> win against the bot: one dooler for every hit you landed
      POST /wallet/spend  { reason, ref }   -> pay 100 to keep an AI-built move
-     POST /wallet/report { match, role, winner }  -> online result; when both players agree the winner gets 50:
-                                              25 from the loser's balance and 25 from the game
+     POST /wallet/report { match, role, winner, hits: { host, guest } }  -> online result. When both games agree,
+                                              the winner gets (their hits - the loser's hits): half from the loser,
+                                              half from the game (the game covers any odd one, so no fractions)
    New players start with 100. Earnings have daily caps and bot wins are rate-limited to stop farming. */
-const DOOLERS = { coupon: 500, welcome: 100, move: 100, bot: { easy: 30, normal: 60, hard: 100 }, matchPot: 25, botCapPerDay: 800, matchCapPerDay: 1500, botMinGapMs: 50000 };
+const DOOLERS = { coupon: 500, welcome: 100, move: 100, maxHits: 150, bot: { easy: 1, normal: 1, hard: 1 }, botCapPerDay: 800, matchCapPerDay: 1500, botMinGapMs: 50000 };
 async function authUid(request, env) {
   const tok = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
   if (env.DEV_FAKE_AUTH === '1' && tok.startsWith('dev:')) return tok.slice(4);
@@ -222,7 +223,7 @@ async function walletRoute(request, env, cors, path) {
   let body = {}; if (request.method === 'POST') { try { body = await request.json(); } catch (e) {} }
   const w = wallet(env, uid);
   if (path === '/wallet') return json(await callDO(w, '/get', {}), 200, cors);
-  if (path === '/wallet/bot') return json(await callDO(w, '/bot', { level: String(body.level || '') }), 200, cors);
+  if (path === '/wallet/bot') return json(await callDO(w, '/bot', { level: String(body.level || ''), hits: Math.max(0, Math.min(DOOLERS.maxHits, Math.floor(Number(body.hits) || 0))) }), 200, cors);
   if (path === '/wallet/spend') return json(await callDO(w, '/spend', { amount: DOOLERS.move, reason: String(body.reason || 'move').slice(0, 40), ref: String(body.ref || '').slice(0, 40) }), 200, cors);
   if (path === '/wallet/coupon') {
     // tester code: kept as a secret on the server (TESTER_CODE), never in the page
@@ -235,9 +236,11 @@ async function walletRoute(request, env, cors, path) {
   if (path === '/wallet/report') {
     const match = String(body.match || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 60), role = body.role === 'host' ? 'host' : body.role === 'guest' ? 'guest' : '';
     const winner = ['host', 'guest', 'draw'].includes(body.winner) ? body.winner : '';
+    const hv = v => Math.max(0, Math.min(DOOLERS.maxHits, Math.floor(Number(v) || 0)));
+    const hits = { host: hv(body.hits && body.hits.host), guest: hv(body.hits && body.hits.guest) };
     if (!match || !role || !winner) return json({ error: 'bad_request' }, 400, cors);
     const m = env.MATCH.get(env.MATCH.idFromName(match));
-    return json(await callDO(m, '/report', { uid, role, winner }), 200, cors);
+    return json(await callDO(m, '/report', { uid, role, winner, hits }), 200, cors);
   }
   return json({ error: 'not_found' }, 404, cors);
 }
@@ -256,7 +259,8 @@ export class Wallet {
     const w = await this.load();
     if (path === '/get') return json({ balance: w.balance });
     if (path === '/bot') {
-      const amt = DOOLERS.bot[b.level]; if (!amt) return json({ ok: false, balance: w.balance, error: 'level' });
+      if (!DOOLERS.bot[b.level]) return json({ ok: false, balance: w.balance, error: 'level' });
+      const amt = Math.max(0, Math.floor(Number(b.hits) || 0)); if (!amt) return json({ ok: false, gained: 0, balance: w.balance });
       if (Date.now() - w.lastBot < DOOLERS.botMinGapMs) return json({ ok: false, balance: w.balance, error: 'too_soon' });
       const give = Math.max(0, Math.min(amt, DOOLERS.botCapPerDay - w.bot));
       w.lastBot = Date.now(); w.bot += give; w.balance += give; w.log.push({ t: Date.now(), d: give, r: 'bot ' + b.level }); await this.save(w);
@@ -295,10 +299,11 @@ export class Match {
     if (m.settled) return json({ ok: true, settled: pub(m.settled), mine: this.mine(m.settled, b.uid) });
     const other = m.reports[b.role === 'host' ? 'guest' : 'host'];
     if (other && other.uid === b.uid) return json({ ok: false, error: 'same_player' });
-    m.reports[b.role] = { uid: b.uid, winner: b.winner, t: Date.now() };
+    m.reports[b.role] = { uid: b.uid, winner: b.winner, hits: b.hits || { host: 0, guest: 0 }, t: Date.now() };
     await this.state.storage.put('m', m);
     const h = m.reports.host, g = m.reports.guest;
-    if (h && g) { await this.settle(m, h.winner === g.winner ? h.winner : 'disputed'); return json({ ok: true, settled: pub(m.settled), mine: this.mine(m.settled, b.uid) }); }
+    const same = h && g && h.winner === g.winner && h.hits.host === g.hits.host && h.hits.guest === g.hits.guest;
+    if (h && g) { await this.settle(m, same ? h.winner : 'disputed'); return json({ ok: true, settled: pub(m.settled), mine: this.mine(m.settled, b.uid) }); }
     await this.state.storage.setAlarm(Date.now() + 90000);
     return json({ ok: true, pending: true });
   }
@@ -308,9 +313,12 @@ export class Match {
     if (winnerRole === 'host' || winnerRole === 'guest') {
       const win = m.reports[winnerRole], lose = m.reports[winnerRole === 'host' ? 'guest' : 'host'];
       st.winnerUid = win && win.uid; st.loserUid = lose && lose.uid;
+      // the winner earns the hit difference: half from the loser (rounded down), the rest from the game
+      const hits = win.hits, other = winnerRole === 'host' ? 'guest' : 'host', diff = Math.max(0, hits[winnerRole] - hits[other]);
+      const loserShare = Math.floor(diff / 2), gameShare = diff - loserShare;
       let fromLoser = 0;
-      if (lose && lose.winner === winnerRole) { const r = await callDO(wallet(this.env, lose.uid), '/debit', { amount: DOOLERS.matchPot, reason: 'lost online' }); fromLoser = r.taken || 0; }
-      const r2 = await callDO(wallet(this.env, win.uid), '/credit', { amount: DOOLERS.matchPot + fromLoser, reason: 'won online' });
+      if (lose && lose.winner === winnerRole && loserShare > 0) { const r = await callDO(wallet(this.env, lose.uid), '/debit', { amount: loserShare, reason: 'lost online' }); fromLoser = r.taken || 0; }
+      const r2 = diff > 0 ? await callDO(wallet(this.env, win.uid), '/credit', { amount: gameShare + fromLoser, reason: 'won online' }) : { gained: 0 };
       st.won = r2.gained || 0; st.lost = fromLoser;
     }
     m.settled = st; await this.state.storage.put('m', m);
@@ -320,7 +328,8 @@ export class Match {
     const rs = Object.values(m.reports); const one = rs.length === 1 ? rs[0] : null;
     // only the winner showed up: give the game's share, take nothing from the absent player
     if (one && (one.winner === 'host' || one.winner === 'guest') && m.reports[one.winner] && m.reports[one.winner].uid === one.uid) {
-      const r = await callDO(wallet(this.env, one.uid), '/credit', { amount: DOOLERS.matchPot, reason: 'won online (opponent left)' });
+      const other = one.winner === 'host' ? 'guest' : 'host', diff = Math.max(0, one.hits[one.winner] - one.hits[other]);
+      const r = diff > 0 ? await callDO(wallet(this.env, one.uid), '/credit', { amount: diff - Math.floor(diff / 2), reason: 'won online (opponent left)' }) : { gained: 0 };
       m.settled = { winner: one.winner, won: r.gained || 0, lost: 0, winnerUid: one.uid, loserUid: null };
     } else m.settled = { winner: 'none', won: 0, lost: 0 };
     await this.state.storage.put('m', m);

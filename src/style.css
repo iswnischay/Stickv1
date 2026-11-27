@@ -404,11 +404,22 @@ body.has-screen .topbar { visibility: hidden; }
 
 /* ---------- doolers ---------- */
 .dl { display: inline-flex; align-items: center; gap: 0.25em; font-weight: 800; white-space: nowrap; }
-.dl::before { content: "d"; display: inline-grid; place-items: center; width: 1.25em; height: 1.25em; border-radius: 50%; font: 800 0.75em/1 var(--display);
-  color: #3a2600; background: radial-gradient(circle at 35% 30%, #ffe9a3, #f2b928 60%, #c98a00); box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.25); }
+.dl::before { content: ""; display: inline-block; flex: none; width: 1.3em; height: 1.3em; vertical-align: -0.2em;
+  background: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22%3E %3Ccircle cx=%2233.5%22 cy=%2233.5%22 r=%2227%22 fill=%22%23f5cf5b%22/%3E %3Cpath d=%22M36.6 45.2V50q0 4.6 4 4.6t4-4.6v-6.6%22 fill=%22%23e8546a%22 stroke=%22%231c1c1c%22 stroke-width=%222.4%22 stroke-linejoin=%22round%22/%3E %3Cpath d=%22M40.6 47.4v3%22 stroke=%22%231c1c1c%22 stroke-width=%221.8%22 stroke-linecap=%22round%22/%3E %3Ccircle cx=%2232%22 cy=%2232%22 r=%2228%22 fill=%22none%22 stroke=%22%231c1c1c%22 stroke-width=%223%22/%3E %3Cg fill=%22none%22 stroke=%22%231c1c1c%22 stroke-width=%222.6%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22%3E %3Cpath d=%22M14 18.5q6-4.5 12-.5M38 18q6-4 12 .5%22/%3E %3Cpath d=%22M24.5 25.5q-1.5-2.3-4-2.3q-3.4 0-3.4 2.9q0 2.6 3.6 3.4q3.9.9 3.9 3.6q0 3-3.6 3q-2.8 0-4.3-2.3M20.6 21v17.6%22/%3E %3Cpath d=%22M47 25.5q-1.5-2.3-4-2.3q-3.4 0-3.4 2.9q0 2.6 3.6 3.4q3.9.9 3.9 3.6q0 3-3.6 3q-2.8 0-4.3-2.3M43.1 21v17.6%22/%3E %3Cpath d=%22M14.2 43l2.4-2.4q15.4 10 30.8 0l2.4 2.4%22/%3E %3C/g%3E %3C/svg%3E") center / contain no-repeat; }
 .dl-result { margin-top: 14px; font-size: 1.05rem; }
 .dl-result.win { color: var(--light); font-weight: 700; }
 .dl-result.lose { color: var(--red); font-weight: 700; }
 .dl-result.err { color: var(--red); }
-.buy-row .cta .dl::before { color: #3a2600; }
 .draft-card { border-style: dashed; }
+
+/* doolers balance, top-left on Build and results */
+.dl-pill { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 12px); left: 16px; z-index: 30; display: inline-flex; align-items: baseline; gap: 6px;
+  font-size: 1.1rem; padding: 5px 14px; border: 2px solid var(--ink); border-radius: 999px; background: var(--panel); color: var(--ink); box-shadow: 3px 3px 0 var(--ink); }
+.dl-pill[hidden] { display: none; }
+.dl-pill small { font-size: 0.75rem; font-weight: 700; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.06em; }
+.dl-pill.bump { animation: dlbump 0.7s ease-out; }
+@keyframes dlbump { 0% { transform: scale(1); } 30% { transform: scale(1.25) rotate(-6deg); background: #ffe58a; } 100% { transform: scale(1); } }
+.dl-result:empty { display: none; }
+.earn-list { margin: 8px 0 0; padding-left: 1.2em; line-height: 1.5; }
+.earn-list li { margin-bottom: 4px; }
+body.has-pill .screen { padding-top: calc(env(safe-area-inset-top, 0px) + 68px); }

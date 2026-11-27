@@ -22,10 +22,10 @@ Setup (once):
 
 ## Doolers
 
-Doolers are the in-game currency (shown with a gold **d**). New players start with 100.
+Doolers are the in-game currency (shown with the money-eyes coin). New players start with 100.
 
-- **Beat the bot:** Easy 30 · Normal 60 · Hard 100 (wins only; at least a minute between rewards, 800 a day max).
-- **Beat a friend online:** +50, of which 25 comes from the loser's balance and 25 from the game. Both games report the result and doolers only move when they agree. If the loser closes the game, the winner still gets the game's 25 after 90 seconds.
+- **Beat the bot:** one dooler for every hit you landed on it (head or body), on any level. Wins only; at least 50 seconds between rewards, 800 a day max.
+- **Beat a friend online:** your hits minus their hits. Half comes from the loser's balance (rounded down) and the rest from the game, so there are never fractions. Both games report the result and hit counts, and doolers only move when they agree. If the loser closes the game, the winner still gets the game's half after 90 seconds.
 - **Spend:** keeping a move built by the AI costs 100. Without enough doolers you can save it as a draft, keep improving it with the AI, and pay for it later. Slider edits stay free.
 
 **Tester code:** add a repository secret `TESTER_CODE` (any word you like). Signed-in players who enter it under Settings → Tester code get 500 doolers each time. The code stays on the server and never appears in the page.
