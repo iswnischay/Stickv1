@@ -33,7 +33,7 @@ const mv = (name, type, [damage, speed, size, count, duration], effects, cooldow
   ({ name, type, stats: { damage, speed, size, count, duration }, effects: effects.map(([t, s]) => ({ type: t, strength: s })), cooldown, mana_overcharge, visual: { shape }, flavor });
 const DEFAULTS = {
   light: [mv('Light Lance', 'beam', [4, 7, 2, 1, 0], [], 3, 0, 'spear', 'A thin golden lance of light.'),
-    mv('Flash', 'burst', [1, 5, 4, 1, 0], [['blind', 2]], 6, 0, 'star', 'A white pop of light that leaves anyone close seeing spots.'),
+    mv('Flash', 'burst', [1, 5, 4, 1, 0], [['blind', 2]], 6, 0, 'star', 'A blinding flash: the enemy’s screen goes white, wherever they are.'),
     mv('Light Step', 'dash', [0, 8, 1, 1, 0], [], 4, 0, 'orb', 'Blink in a puff of sparkles.'),
     mv('Mirror Shield', 'shield', [0, 1, 3, 1, 3], [['reflect', 2]], 7, 0, 'orb', 'A shimmering bubble that throws attacks straight back.'),
     mv('Judgement', 'strike', [7, 6, 8, 1, 0], [['blind', 2]], 1, 0, 'star', 'A pillar of sunlight slams down where the enemy stands.')],
@@ -240,7 +240,7 @@ function fitBudget(raw, element, changeable) {
 const effOf = (m, t) => { const e = m.effects.find(x => x.type === t); return e ? e.strength : 0; };
 
 /* ---------- game state ---------- */
-const opts = { mode: 'bot', roundLen: 120, level: 'normal', aim: 'auto' };
+const opts = { mode: 'bot', roundLen: 120, level: 'normal', aim: 'auto' }; // aiming is always automatic
 let plan = [null, null];
 let fighters = [];
 let projectiles = [], beams = [], zones = [], rings = [], particles = [], texts = [], strikes = [], waves = [], traps = [], summons = [], flashes = [], pending = [];
@@ -256,7 +256,12 @@ const legendEl = document.getElementById('legend');
 let scale = 1;
 const mouse = { x: W / 2, y: H / 2, over: false };
 
-function sideLabel(i) { if (opts.mode === 'practice') return i === 0 ? 'You' : 'Dummy'; if (opts.mode === 'online') return i === NET.side ? 'You' : 'Opponent'; return opts.mode === 'bot' ? (i === 0 ? 'You' : 'Bot') : (i === 0 ? 'Player 1' : 'Player 2'); }
+function myName() { return ACC.username ? '@' + ACC.username : 'You'; }
+function sideLabel(i) {
+  if (opts.mode === 'practice') return i === 0 ? myName() : 'Dummy';
+  if (opts.mode === 'online') { if (i === NET.side) return myName(); const u = ((oppPeer() || {}).data || {}).u; return u ? '@' + String(u).slice(0, 16) : 'Opponent'; }
+  return opts.mode === 'bot' ? (i === 0 ? myName() : 'Bot') : (i === 0 ? 'Player 1' : 'Player 2');
+}
 let sideEls = ['fire', 'water'];
 function randomOther(el) { const o = EL_IDS.filter(x => x !== el); return o[Math.floor(Math.random() * o.length)]; }
 
@@ -421,17 +426,24 @@ function rayEnd(x0, y0, ang) {
   return { x: x0 + c * t, y: y0 + s * t, t };
 }
 
+// Blind reaches the opponent wherever they are: it's a flash (light), a shroud (darkness) or an element haze over their screen.
+function blindTime(m) { return 0.3 + effOf(m, 'blind') * 0.45 + (m.stats.duration || 0) * 0.5; }
+function blindTarget(tgt, m) {
+  const t = blindTime(m), fresh = !(tgt.blind > 0.15);
+  tgt.blind = Math.max(tgt.blind, t); tgt.blindMax = Math.max(t, tgt.blind); tgt.blindEl = m.element || 'light';
+  if (fresh) addText(tgt.x, tgt.y - 110, tgt.blindEl === 'darkness' ? 'shrouded' : 'blinded', elCol(tgt.blindEl), 22);
+}
 function applyEffects(tgt, m, srcX) {
   const dir = Math.sign(tgt.x - srcX) || 1;
   const push = effOf(m, 'push'), pull = effOf(m, 'pull'), blind = effOf(m, 'blind'), slow = effOf(m, 'slow');
   if (push && m.type !== 'zone') { tgt.vx = dir * (220 + push * 150); tgt.vy = -220 - push * 60; tgt.onGround = false; tgt.stun = Math.max(tgt.stun, 0.22); }
   if (pull && m.type !== 'zone') { tgt.vx = -dir * (180 + pull * 110); tgt.stun = Math.max(tgt.stun, 0.18); }
-  if (blind) { tgt.blind = Math.max(tgt.blind, 0.3 + blind * 0.45 + (m.stats.duration || 0) * 0.5); addText(tgt.x, tgt.y - 110, 'blinded', C.soft, 20); }
+  if (blind) blindTarget(tgt, m);
   if (slow) { tgt.slow = Math.max(tgt.slow, 0.6 * slow); }
 }
 
 function registerHit(att, tgt, idx, isHead, m, srcX) {
-  if (tgt.invuln > 0) return false;
+  if (!tgt || tgt === att || tgt.invuln > 0) return false;
   applyEffects(tgt, m, srcX);
   if (m.stats.damage <= 0) return true;
   let pts = isHead ? 2 : 1;
@@ -481,6 +493,7 @@ function tryCast(f, i) {
   else { f.mana -= m.mana_cost; f.cds[i] = m.cooldown; }
   f.stats[i].casts++; f.castType = m.type; f.castUlt = !!m.ult; f.castAnim = f.castDur = CAST_DUR[m.type] || 0.28;
   const st = m.stats, o = opp(f), ang = f.aimAng, cy = chestY(f);
+  if (effOf(m, 'blind') && o && o !== f) blindTarget(o, m);
   const ca = Math.cos(ang), sa = Math.sin(ang);
   switch (m.type) {
     case 'projectile': {
@@ -1562,7 +1575,7 @@ function drawFighter(f) {
   if (f.blind > 0) tags.push('blind');
   if (f.slow > 0) tags.push('slow');
   if (tags.length) { ctx.fillStyle = C.soft; ctx.font = '400 17px Anton, Impact, sans-serif'; ctx.textAlign = 'center'; ctx.fillText(tags.join(' + '), f.x, f.y - 96); }
-  if (f.blind > 0) { ctx.save(); ctx.globalAlpha = 0.6; ctx.fillStyle = 'rgba(255,240,170,0.7)'; ctx.beginPath(); ctx.arc(f.x, f.y - 70, 22 + Math.sin(clock * 20) * 3, 0, 7); ctx.fill(); ctx.restore(); }
+  if (f.blind > 0) { ctx.save(); ctx.globalAlpha = 0.6; ctx.fillStyle = withA(f.blindEl === 'darkness' ? '#1a0b2e' : elCol(f.blindEl || 'light'), 0.75); ctx.beginPath(); ctx.arc(f.x, f.y - 70, 22 + Math.sin(clock * 20) * 3, 0, 7); ctx.fill(); ctx.restore(); }
 }
 function drawBody(f, P, fs, shakeX, col, ghost) {
   const L1 = 17, L2 = 17, U1 = 14, U2 = 14, TORSO = 24;
@@ -1743,16 +1756,43 @@ function updateCam(dt) {
   const half = W / (2 * cam.z); cam.x = clamp(cam.x, half, W - half);
   cam.y = GROUND - (GROUND - H / 2) / cam.z;
 }
-// When I'm blinded my screen goes dark except for a small circle around me.
+// When I'm blinded my own screen is covered: a white flash for light, a creeping shroud for darkness,
+// and a thick haze in the attacker's element colour for anything else. Only the blinded player sees this.
 function drawDarkness() {
-  const me = fighters.find(f => isMine(f));
-  const target = me && me.blind > 0 && (fighting() || state === 'timeup') ? 1 : 0;
-  drawDarkness.a = (drawDarkness.a || 0) + (target - (drawDarkness.a || 0)) * Math.min(1, frameDt * (target ? 10 : 4));
-  const a = drawDarkness.a; if (a < 0.02 || !me) return;
-  const sx = (me.x - cam.x) * cam.z + W / 2, sy = (me.y - 40 - cam.y) * cam.z + H / 2;
-  const g = ctx.createRadialGradient(sx, sy, 30, sx, sy, 140);
-  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, `rgba(4,4,10,${0.93 * a})`);
-  ctx.save(); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); ctx.restore();
+  // in a move preview, show what the dummy would see so you can judge the effect
+  const me = PV.on ? fighters[1] : fighters.find(f => isMine(f));
+  const on = me && me.blind > 0 && (PV.on || fighting() || state === 'timeup');
+  const D = drawDarkness;
+  D.a = (D.a || 0) + ((on ? 1 : 0) - (D.a || 0)) * Math.min(1, frameDt * (on ? 14 : 3.5));
+  if (on) { if (!D.was) D.t0 = clock; D.el = me.blindEl || D.el || 'light'; }
+  D.was = on;
+  const a = D.a; if (a < 0.02 || !me) return;
+  const sx = (me.x - cam.x) * cam.z + W / 2, sy = (me.y - 40 - cam.y) * cam.z + H / 2, age = clock - (D.t0 || 0);
+  ctx.save();
+  if (D.el === 'light') {
+    // bright flash that fades to a glare you can barely see through
+    const burst = Math.max(0, 1 - age / 0.35);
+    ctx.fillStyle = `rgba(255,252,235,${Math.min(1, (0.86 + burst * 0.14) * a)})`; ctx.fillRect(0, 0, W, H);
+    const g = ctx.createRadialGradient(sx, sy, 10, sx, sy, 120); g.addColorStop(0, `rgba(255,214,90,${0.35 * a})`); g.addColorStop(1, 'rgba(255,214,90,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 0.5 * a; ctx.strokeStyle = '#ffd447'; ctx.lineWidth = 3;
+    for (let k = 0; k < 14; k++) { const an = k / 14 * Math.PI * 2 + clock * 0.4, r0 = 140 + 30 * Math.sin(clock * 3 + k); ctx.beginPath(); ctx.moveTo(sx + Math.cos(an) * r0, sy + Math.sin(an) * r0); ctx.lineTo(sx + Math.cos(an) * (r0 + 900), sy + Math.sin(an) * (r0 + 900)); ctx.stroke(); }
+  } else if (D.el === 'darkness') {
+    // ink closes in from the edges, leaving a small trembling window around you
+    const close = Math.min(1, age / 0.5), hole = 170 - close * 95 + Math.sin(clock * 5) * 6;
+    const g = ctx.createRadialGradient(sx, sy, hole * 0.35, sx, sy, hole);
+    g.addColorStop(0, 'rgba(6,2,14,0)'); g.addColorStop(1, `rgba(6,2,14,${0.97 * a})`);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 0.55 * a; ctx.fillStyle = '#2a0f4a';
+    for (let k = 0; k < 10; k++) { const an = k / 10 * Math.PI * 2 + clock * 0.25, r = hole + 20 + 18 * Math.sin(clock * 2.3 + k * 1.7); ctx.beginPath(); ctx.arc(sx + Math.cos(an) * r, sy + Math.sin(an) * r, 26 + 8 * Math.sin(clock * 3 + k), 0, 7); ctx.fill(); }
+  } else {
+    const col = elCol(D.el), g = ctx.createRadialGradient(sx, sy, 40, sx, sy, 160);
+    g.addColorStop(0, withA(col, 0.15 * a)); g.addColorStop(1, withA(col, 0.9 * a));
+    ctx.fillStyle = `rgba(5,8,16,${0.55 * a})`; ctx.fillRect(0, 0, W, H); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+  ctx.globalAlpha = a; ctx.fillStyle = D.el === 'light' ? '#7a5a00' : '#e8e0ff'; ctx.font = '400 30px Anton, Impact, sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(D.el === 'darkness' ? 'SHROUDED' : 'BLINDED', W / 2, 120);
+  ctx.restore();
 }
 function render() {
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
@@ -1970,7 +2010,7 @@ async function netStart(role, code) {
     const room = await openRoom(code);
     if (NET.code !== code) { room.leave(); return; }
     NET.room = room; NET.on = true; NET.pres = {}; NET.connectedAt = performance.now();
-    netPresence({ r: role, v: 1 });
+    netPresence({ r: role, v: 1, u: ACC.username || '' });
     NET.status = role === 'host' ? 'Waiting for your friend to join…' : 'Looking for the host…';
   } catch (e) {
     if (e && e.code === 'code_taken' && role === 'host') { netStart('host', makeCode()); return; }
@@ -2097,7 +2137,7 @@ function buildSnap() {
   const F = fighters.map(f => [Math.round(f.x), Math.round(f.y), Math.round(f.vx), f.face, r1(f.aimAng), Math.round(f.mana), Math.round(f.ult), f.cds.map(r1),
     (f.onGround ? 1 : 0) | (f.stun > 0 ? 2 : 0) | (f.blind > 0 ? 4 : 0) | (f.slow > 0 ? 8 : 0) | (f.invuln > 0 ? 16 : 0) | (f.dash ? 32 : 0),
     f.shield ? [Math.round(f.shield.r), r1(f.shield.t), f.shield.reflect ? 1 : 0] : 0, r1(f.castAnim), r1(f.runPhase % 100),
-    f.score, f.roundScore[0], f.roundScore[1], f.heads, f.bodies, f.bonus, EL_INDEX[f.element], f.stats.map(s => [s.casts, s.hits, s.pts]), Math.round(f.vy), f.orbit ? [f.orbit.n, Math.round(f.orbit.r), r1(f.orbit.ang), r1(f.orbit.or)] : 0, TYPE_IDS.indexOf(f.castType || 'projectile') + (f.castUlt ? 100 : 0), f.jumps, f.hitDir || 0]);
+    f.score, f.roundScore[0], f.roundScore[1], f.heads, f.bodies, f.bonus, EL_INDEX[f.element], f.stats.map(s => [s.casts, s.hits, s.pts]), Math.round(f.vy), f.orbit ? [f.orbit.n, Math.round(f.orbit.r), r1(f.orbit.ang), r1(f.orbit.or)] : 0, TYPE_IDS.indexOf(f.castType || 'projectile') + (f.castUlt ? 100 : 0), f.jumps, f.hitDir || 0, f.blind > 0 ? EL_INDEX[f.blindEl || 'light'] : -1]);
   const oin = ((oppPeer() || {}).data || {}).in || {};
   const snap = { aq: oin.q | 0, st: state, rd: round, tl: r1(timeLeft), cd: r1(countdown), bn: banner > 0 ? [bannerText, r1(banner)] : 0, sh: Math.round(shake), f: F,
     z: zones.map(z => [Math.round(z.x), Math.round(z.y), Math.round(z.r), EL_INDEX[z.el], r1(z.life), r1(z.max), r1(z.spin)]),
@@ -2169,7 +2209,7 @@ function applyFighters(F) {
     f.svy = Number(a[20]) || 0; if (!predicted) f.vy = f.svy;
     f.orbit = Array.isArray(a[21]) ? { n: a[21][0] | 0, r: Number(a[21][1]), ang: Number(a[21][2]), or: Number(a[21][3]) } : null;
     const ct = a[22] | 0; f.castType = TYPE_IDS[ct % 100] || 'projectile'; f.castUlt = ct >= 100; if (f.castAnim > (f.castDur || 0)) f.castDur = f.castAnim; if (f.castAnim <= 0) f.castDur = 0;
-    if (!predicted) f.jumps = a[23] | 0; f.hitDir = Number(a[24]) || 0;
+    if (!predicted) f.jumps = a[23] | 0; f.hitDir = Number(a[24]) || 0; if (EL_IDS[a[25]]) f.blindEl = EL_IDS[a[25]];
   });
 }
 function applyEntities(s) {
@@ -2590,14 +2630,21 @@ function showLobby() {
   state = 'lobby';
   const hosting = NET.role === 'host' && NET.code && NET.on;
   showScreen(`<div class="narrow">
-    <h2>Play online</h2>
-    <p class="lede">One player hosts and shares the code. The other enters it to join. ${STANDALONE ? 'Both of you just need this game open. It connects you directly, no account needed.' : 'Your friend needs to open this same page in Claude (share it with them from the Share menu).'}</p>
-    ${hosting ? `<p class="note">Your game code</p><div class="big" style="letter-spacing:0.12em">${esc(NET.code)}</div>` : `
-      <div class="go"><button class="cta" data-action="host">Host a game</button></div>
-      <div class="opt" style="margin-top:22px"><span>Join with a code</span><div class="seg"><input data-joincode maxlength="5" placeholder="CODE" style="font:400 1.4rem Anton, Impact, sans-serif;letter-spacing:0.15em;width:8.5rem;text-transform:uppercase;padding:6px 10px;border:2px solid var(--ink);border-radius:8px;background:var(--panel);color:var(--ink)"><button data-action="join">Join</button></div></div>`}
-    ${NET.status ? `<p class="status" role="status">${esc(NET.status)}</p>` : ''}
-    <p class="note">Your element: <b>${esc(elName(sideEls[0]))}</b>. You can change it and build your moves once your friend arrives.</p>
-    <div class="go"><button data-action="menu">${NET.on ? 'Leave' : 'Back to menu'}</button>${STANDALONE ? '<button class="ghost" data-action="settings">Server settings</button>' : ''}</div>
+    ${screenHead('Online', 'play', 'One of you hosts and shares the code, the other joins with it.')}
+    <div class="home-cards two">
+      <section class="panel lobby-box">
+        <h3>Host a game</h3>
+        ${hosting ? `<p class="note">Send this code to your friend</p><div class="code-big">${esc(NET.code)}</div><p class="note pulse">Waiting for them to join…</p>`
+          : `<p class="note">Get a code to share.</p><div class="go"><button class="cta glow" data-action="host">Host</button></div>`}
+      </section>
+      <section class="panel lobby-box">
+        <h3>Join a game</h3>
+        <p class="note">Enter your friend's code.</p>
+        <div class="code-row"><input data-joincode maxlength="5" placeholder="CODE" ${hosting ? 'disabled' : ''}><button class="cta" data-action="join" ${hosting ? 'disabled' : ''}>Join</button></div>
+      </section>
+    </div>
+    ${NET.status && !hosting ? `<p class="status" role="status">${esc(NET.status)}</p>` : ''}
+    <div class="go">${NET.on ? '<button class="ghost pill" data-action="menu">Leave</button>' : ''}${STANDALONE ? '<button class="ghost pill" data-action="settings">Server settings</button>' : ''}</div>
   </div>`);
 }
 function showLost() {
@@ -2612,7 +2659,7 @@ function oppPanelInner() {
   const c = NET.oppPlan, ready = NET.oppReady === round + 1;
   if (!c || !EL_IDS.includes(c.el)) return `<h2>Opponent</h2><p class="note">Waiting for your opponent to pick an element…</p>`;
   const names = Array.isArray(c.m) ? c.m.map(m => esc(String((m && m.name) || '?').slice(0, 26))) : [];
-  return `<div class="col-head"><h2>${esc(elName(c.el))}</h2><span class="who">${ready ? 'Ready!' : 'Preparing…'}</span></div>
+  return `<div class="col-head"><h2>${esc(elName(c.el))}</h2><span class="who">${esc(sideLabel(1 - NET.side))} · ${ready ? 'Ready!' : 'Preparing…'}</span></div>
     <p class="passive"><b>${esc(elName(c.el))}:</b> ${esc(ELEMENTS[c.el].passive)}</p>
     <p class="note">Their moves: ${names.slice(0, 4).join(', ')}. Ultimate: ${names[4] || '?'}.</p>`;
 }
@@ -2892,7 +2939,7 @@ screenEl.addEventListener('click', e => {
   if (btn.dataset.set) {
     const [k, v] = btn.dataset.set.split(':');
     opts[k] = k === 'roundLen' ? Number(v) : v;
-    if (state === 'practice-menu') showPracticeMenu(); else if (state === 'play') showPlay(); else showMenu(); updateLegend();
+    if (state === 'practice-menu') showPracticeMenu(); else if (state === 'bot-setup') showBotSetup(); else if (state === 'play') showPlay(); else showMenu(); updateLegend();
     return;
   }
   if (btn.dataset.netpick) { const keep = {}; screenEl.querySelectorAll('[data-setting]').forEach(i => { keep[i.dataset.setting] = i.value; }); settings.net = btn.dataset.netpick; showSettings(); Object.entries(keep).forEach(([k, v]) => { const i = screenEl.querySelector(`[data-setting="${k}"]`); if (i) i.value = v; }); return; }
@@ -2905,14 +2952,15 @@ screenEl.addEventListener('click', e => {
   const side = Number(btn.dataset.side);
   switch (btn.dataset.action) {
     case 'setup': setupMatch(); updateLegend(); break;
-    case 'play': showPlay(); break;
-    case 'practice': showPracticeMenu(); break;
-    case 'build': BUILD.el = sideEls[0]; BUILD.pv = null; BUILD.draft = null; showBuild(); break;
+    case 'play': if (needLogin()) { showLogin(); break; } showPlay(); break;
+    case 'bot-setup': showBotSetup(); break;
+    case 'practice': if (needLogin()) { showLogin(); break; } showPracticeMenu(); break;
+    case 'build': if (needLogin()) { showLogin(); break; } BUILD.el = sideEls[0]; BUILD.pv = null; BUILD.draft = null; showBuild(); break;
     case 'start-bot': opts.mode = 'bot'; PREP_PV = null; setupMatch(); updateLegend(); break;
     case 'practice-start': startPractice(); break;
     case 'pv-close': PREP_PV = null; showPrep(); break;
     case 'bnew': BUILD.ai = null; newDraft(false); showBuild(); break;
-    case 'ai-open': BUILD.ai = { ult: false, prompt: '', busy: false, status: null }; BUILD.draft = null; showBuild(); break;
+    case 'ai-open': BUILD.ai = { ult: false, prompt: '', busy: false, status: null }; BUILD.draft = null; showBuild(); { const t = screenEl.querySelector('[data-aiprompt]'); if (t) t.focus(); } break;
     case 'ai-close': BUILD.ai = null; showBuild(); break;
     case 'ai-go': aiGo(); break;
     case 'signin': window.StickAccount && window.StickAccount.signIn().catch(err => { const m = String((err && err.code) || err.message || err); if (!/popup-closed|cancelled/.test(m)) alert('Sign-in failed: ' + m); }); break;
@@ -2926,11 +2974,22 @@ screenEl.addEventListener('click', e => {
     case 'bnewult': BUILD.ai = null; newDraft(true); showBuild(); break;
     case 'bwatch': BUILD.pv = { draft: true, ult: BUILD.draft.ult, raw: deep(BUILD.draft.raw) }; showBuild(); break;
     case 'bcancel': BUILD.draft = null; BUILD.pv = null; showBuild(); break;
+    case 'bedit': {
+      const pv = BUILD.pv; if (!pv || pv.draft) break; const x = libMove(BUILD.el, pv.id); if (!x) break;
+      BUILD.ai = null; BUILD.draft = { ult: !!pv.ult, raw: deep(x.raw), editOf: pv.id }; BUILD.pv = { draft: true, ult: !!pv.ult, raw: BUILD.draft.raw }; showBuild(); break;
+    }
     case 'bsave': {
       if (BUILD.ai) BUILD.ai = null;
-      const d = BUILD.draft, el = BUILD.el, id = 'c' + Date.now().toString(36);
+      const d = BUILD.draft, el = BUILD.el, list = (LIB.custom[el] = LIB.custom[el] || []);
       const m = normalize(deep(d.raw), el, d.ult ? 4 : 0, [], []);
-      (LIB.custom[el] = LIB.custom[el] || []).push({ id, ult: d.ult, raw: toRaw(m) }); saveLib();
+      let id;
+      if (d.editOf && d.editOf.startsWith('c') && list.some(c => c.id === d.editOf)) { id = d.editOf; list.find(c => c.id === id).raw = toRaw(m); }
+      else {
+        id = 'c' + Date.now().toString(36); list.push({ id, ult: d.ult, raw: toRaw(m) });
+        // editing an equipped starter swaps your new version into the loadout
+        if (d.editOf) { const ids = loadoutIds(el), k = ids.indexOf(d.editOf); if (k >= 0) { ids[k] = id; LIB.loadout[el] = ids; } }
+      }
+      saveLib();
       BUILD.draft = null; BUILD.pv = { id, ult: d.ult }; showBuild(); break;
     }
     case 'bdel': {
@@ -2939,7 +2998,7 @@ screenEl.addEventListener('click', e => {
       if (LIB.loadout[el]) LIB.loadout[el] = LIB.loadout[el].map((x, k) => x === id ? (k === 4 ? 'du' : 'd' + k) : x);
       saveLib(); BUILD.pv = null; showBuild(); break;
     }
-    case 'lobby': opts.mode = 'online'; NET.status = ''; showLobby(); break;
+    case 'lobby': if (needLogin()) { showLogin(); break; } opts.mode = 'online'; NET.status = ''; showLobby(); break;
     case 'host': netStart('host', makeCode()); break;
     case 'join': {
       const inp = screenEl.querySelector('[data-joincode]'); const code = (inp ? inp.value : '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -3044,70 +3103,72 @@ function loadoutIds(el) {
 function loadoutRaw(el, ids) { return (ids || loadoutIds(el)).map(id => deep(libMove(el, id).raw)); }
 
 /* ---------- screens: home, play, practice ---------- */
-function showMenu() {
-  if (NET.on) netStop();
-  state = 'menu'; paused = false; capture = null; fighters = []; clearArena();
+const needLogin = () => !!(window.StickAccount && window.StickAccount.available()) && !ACC.user;
+function updateTopbar() {
+  const el = document.getElementById('userchip'); if (!el) return;
+  el.innerHTML = ACC.user ? `<span class="uc-dot"></span>${esc(ACC.username ? '@' + ACC.username : 'Signing in…')}` : '';
+  el.hidden = !ACC.user;
+}
+function showLogin() {
+  state = 'login';
   showScreen(`<div class="home">
-    <h1 class="title">Stick V1</h1>
-    <p class="lede">Pick an element, fight with the moves you build. Head hits score 2, body hits score 1.</p>
-    <div class="home-cards">
-      <button class="home-card" data-action="play"><span class="hc-title">Play</span><span class="hc-sub">Against the bot or a friend online</span></button>
-      <button class="home-card" data-action="practice"><span class="hc-title">Practice</span><span class="hc-sub">Try your moves on a dummy</span></button>
-      <button class="home-card" data-action="build"><span class="hc-title">Build</span><span class="hc-sub">See every move, watch it, make your own</span></button>
-    </div>
-    <div class="home-links"><button class="ghost" data-action="controls">Controls</button>${STANDALONE ? '<button class="ghost" data-action="settings">Settings</button>' : ''}</div>
-    ${accountChip()}
+    <div class="logo-mark">STICK<span>V1</span></div>
+    <p class="hero-sub">Ten elements. Your moves, built by you. Fight a bot or a friend.</p>
+    ${!ACC.ready ? '<p class="note">Checking sign-in…</p>' : `<button class="google-btn big" data-action="signin"><span class="g">G</span> Sign in with Google to play</button>
+    <p class="note" style="margin-top:14px">Your username and moves are saved to your account.</p>`}
   </div>`);
 }
-function accountChip() {
-  const A = window.StickAccount;
-  if (!A || !A.available()) return '';
-  if (!ACC.ready) return '<p class="note acct">Checking sign-in…</p>';
-  if (!ACC.user) return `<div class="acct"><button class="google-btn" data-action="signin"><span class="g">G</span> Sign in with Google</button><span class="note">Optional. Saves your moves to your account and unlocks the AI move builder.</span></div>`;
-  return `<div class="acct"><span class="who-chip">@${esc(ACC.username || '…')}</span><button class="ghost small" data-action="username">Change name</button><button class="ghost small" data-action="signout">Sign out</button></div>`;
+function showMenu() {
+  if (NET.on) netStop();
+  state = 'menu'; paused = false; capture = null; fighters = []; clearArena(); opts.mode = 'bot';
+  updateTopbar();
+  if (needLogin()) { showLogin(); return; }
+  if (ACC.user && !ACC.username) { showUsername(); return; }
+  showScreen(`<div class="home">
+    <div class="logo-mark">STICK<span>V1</span></div>
+    <p class="hero-sub">${ACC.username ? `Welcome back, <b>@${esc(ACC.username)}</b>.` : 'Pick an element, fight with the moves you build.'} Head hits score 2, body hits 1.</p>
+    <div class="home-cards">
+      <button class="home-card primary" data-action="play"><span class="hc-title">Play</span><span class="hc-sub">Bot or a friend online</span></button>
+      <button class="home-card" data-action="practice"><span class="hc-title">Practice</span><span class="hc-sub">Try your moves on a dummy</span></button>
+      <button class="home-card" data-action="build"><span class="hc-title">Build</span><span class="hc-sub">Watch, make and edit moves</span></button>
+    </div>
+    <div class="home-links"><button class="ghost pill" data-action="controls">Controls</button>${STANDALONE ? '<button class="ghost pill" data-action="settings">Settings</button>' : ''}${ACC.user ? '<button class="ghost pill" data-action="username">Change name</button><button class="ghost pill" data-action="signout">Sign out</button>' : ''}</div>
+  </div>`);
 }
+function accountChip() { return ''; }
 function showUsername(msg) {
   state = 'username';
   const sug = (ACC.user && ACC.user.name ? ACC.user.name : 'player').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 12) || 'player';
-  showScreen(`<div class="narrow">
+  showScreen(`<div class="narrow center-card">
     <h2>Pick a username</h2>
     <p class="note">3–16 letters, numbers or _. Other players see this name.</p>
-    <div class="seg" style="margin-top:12px"><input data-uname maxlength="16" value="${esc(ACC.username || sug)}" style="font:400 1.3rem Anton, Impact, sans-serif;padding:6px 10px;border:2px solid var(--ink);border-radius:8px;background:var(--panel);color:var(--ink);text-transform:lowercase"><button class="cta" data-action="save-username">Save</button></div>
+    <div class="uname-row"><span class="at">@</span><input data-uname maxlength="16" value="${esc(ACC.username || sug)}"><button class="cta" data-action="save-username">Save</button></div>
     ${msg ? `<p class="status err">${esc(msg)}</p>` : ''}
-    <div class="go">${ACC.username ? '<button class="ghost" data-action="menu">Back</button>' : '<button class="ghost" data-action="signout">Sign out instead</button>'}</div>
+    <div class="go">${ACC.username ? '<button class="ghost pill" data-action="menu">Back</button>' : '<button class="ghost pill" data-action="signout">Sign out instead</button>'}</div>
   </div>`);
 }
-// merge moves saved in the account with the ones on this device
-function mergeCloudLib(cloud) {
-  if (!cloud || typeof cloud !== 'object') { saveLib(); return; }
-  const custom = cloud.custom || {}, loadout = cloud.loadout || {};
-  for (const el of EL_IDS) {
-    const mine = LIB.custom[el] || [], theirs = Array.isArray(custom[el]) ? custom[el] : [];
-    const byId = new Map(); [...theirs, ...mine].forEach(c => { if (c && c.id && c.raw) byId.set(c.id, c); });
-    if (byId.size) LIB.custom[el] = [...byId.values()];
-    if (Array.isArray(loadout[el])) LIB.loadout[el] = loadout[el];
-  }
-  saveLib();
+function screenHead(title, back = 'menu', sub = '') {
+  return `<div class="screen-head"><button class="back" data-action="${back}" aria-label="Back">←</button><div><h2>${title}</h2>${sub ? `<p class="note">${sub}</p>` : ''}</div></div>`;
 }
-
 function showPlay() {
   state = 'play';
   showScreen(`<div class="narrow">
-    <div class="prep-head"><h2>Play</h2><button class="ghost" data-action="menu">Back</button></div>
-    <div class="play-grid">
-      <section class="play-card">
-        <h3>Against the bot</h3>
-        <p class="note">The bot picks a random element and kit. You choose your element and swap your moves in prep.</p>
-        <div class="opt"><span>Bot skill</span><div class="seg">${segButtons('level', [['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']])}</div></div>
-        <div class="opt"><span>Aiming</span><div class="seg">${segButtons('aim', [['auto', 'Auto-aim'], ['mouse', 'Mouse']])}</div></div>
-        <div class="opt"><span>Round length</span><div class="seg">${segButtons('roundLen', [[120, '2:00'], [60, '1:00'], [30, '0:30']])}</div></div>
-        <div class="go"><button class="cta" data-action="start-bot">Fight the bot</button></div>
-      </section>
-      <section class="play-card">
-        <h3>Online with a friend</h3>
-        <p class="note">One of you hosts and shares a 5-letter code, the other joins with it. You both pick your element and moves after joining.</p>
-        <div class="go"><button class="cta" data-action="lobby">Play online</button></div>
-      </section>
+    ${screenHead('Play')}
+    <div class="home-cards two">
+      <button class="home-card primary" data-action="bot-setup"><span class="hc-title">Vs Bot</span><span class="hc-sub">It picks a random element and kit</span></button>
+      <button class="home-card" data-action="lobby"><span class="hc-title">Online</span><span class="hc-sub">Host or join a friend with a code</span></button>
+    </div>
+  </div>`);
+}
+function showBotSetup() {
+  state = 'bot-setup';
+  showScreen(`<div class="narrow">
+    ${screenHead('Vs Bot', 'play')}
+    <div class="panel">
+      <div class="opt"><span>Bot skill</span><div class="seg">${segButtons('level', [['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']])}</div></div>
+      <div class="opt"><span>Round length</span><div class="seg">${segButtons('roundLen', [[120, '2:00'], [60, '1:00'], [30, '0:30']])}</div></div>
+      <p class="note">Two rounds with a half-time break. You pick your element and swap your moves next.</p>
+      <div class="go"><button class="cta glow" data-action="start-bot">Continue</button></div>
     </div>
   </div>`);
 }
@@ -3118,11 +3179,10 @@ function showPracticeMenu() {
   state = 'practice-menu';
   const el = sideEls[0];
   showScreen(`<div class="narrow">
-    <div class="prep-head"><h2>Practice</h2><button class="ghost" data-action="menu">Back</button></div>
+    ${screenHead('Practice')}
     <p class="note">Pick an element. You get your saved moves, endless mana and a fast ultimate, and a dummy to hit.</p>
     ${elPicker('pel', el)}
     <p class="passive" style="margin-top:10px"><b>${elName(el)}:</b> ${esc(ELEMENTS[el].passive)}</p>
-    <div class="opt"><span>Aiming</span><div class="seg">${segButtons('aim', [['auto', 'Auto-aim'], ['mouse', 'Mouse']])}</div></div>
     <div class="go"><button class="cta" data-action="practice-start">Start practice</button></div>
   </div>`);
 }
@@ -3186,7 +3246,7 @@ function showBuild() {
       <span class="mc-sub">${ult ? 'ultimate · ' : ''}${esc(x.raw.type)} · ${x.tag}</span></button>`;
   const pv = BUILD.pv, pm = pv && (pv.draft ? normalize(deep(pv.raw), el, pv.ult ? 4 : 0, [], []) : (() => { const x = libMove(el, pv.id); return x ? normalize(deep(x.raw), el, pv.ult ? 4 : 0, [], []) : null; })());
   showScreen(`<div class="wrap">
-    <div class="prep-head"><div><h2>Build</h2><p>Pick an element, click any move to watch it, or make your own.</p></div><button class="ghost" data-action="menu">Back</button></div>
+    ${screenHead('Build', 'menu', 'Pick an element, click a move to watch it, edit it, or make a new one.')}
     ${elPicker('bel', el)}
     <div class="build-grid" style="--el: var(--el-${el})">
       <section class="col">
@@ -3195,11 +3255,12 @@ function showBuild() {
           <div class="statline"><span>Type <b>${esc(pm.type)}</b></span><span>Damage <b>${pm.stats.damage}</b></span><span>Speed <b>${pm.stats.speed}</b></span><span>Size <b>${pm.stats.size}</b></span><span>Count <b>${pm.stats.count}</b></span><span>Duration <b>${pm.stats.duration}</b></span></div>
           <div>${pm.effects.map(e => `<span class="fx">${esc(e.type)} ${e.strength}</span>`).join('') || '<span class="kind">no effects</span>'}</div>
           <div class="costs">${pm.ult ? `<span>Build ${pm.build_cost} of ${ULT_BUDGET}</span>` : `<span>Cooldown ${pm.cooldown}s</span><span>Build ${pm.build_cost}</span><span class="mana">${pm.mana_cost} mana</span>`}</div>
-          ${!pv.draft && pv.id.startsWith('c') ? `<div class="edit-row"><button class="ghost" data-action="bdel">Delete this move</button></div>` : ''}</div>`
+          ${!pv.draft && pv.id.startsWith('c') ? `<div class="edit-row"><button class="ghost pill" data-action="bdel">Delete this move</button></div>` : ''}</div>`
         : `<p class="note pv-empty">Click a move on the right to watch what it does.</p>`}
-        ${BUILD.draft ? draftHTML() : `<div class="edit-row"><button class="cta" data-action="bnew">Make a new move</button><button data-action="bnewult">Make a new ultimate</button>
-          <button data-action="ai-open">Describe it to the AI</button></div>`}
         ${BUILD.ai ? aiHTML() : ''}
+        ${BUILD.draft ? draftHTML() : `<div class="build-actions">
+          ${BUILD.ai ? '' : '<button class="make-btn" data-action="ai-open"><span>✦</span> Make a move</button>'}
+          <button class="pill" data-action="bedit" ${pv && !pv.draft ? '' : 'disabled title="Click a move first"'}>Edit move</button></div>`}
       </section>
       <section class="col">
         <h3>${elName(el)} moves</h3>
@@ -3219,7 +3280,7 @@ function aiHTML() {
   if (!ACC.user) return `<div class="ai-box"><h3>Describe a move</h3><p class="note">Sign in with Google to use the AI move builder. Your moves are then saved to your account.</p><div class="edit-row"><button class="google-btn" data-action="signin"><span class="g">G</span> Sign in with Google</button><button class="ghost" data-action="ai-close">Cancel</button></div></div>`;
   if (!AI_URL) return `<div class="ai-box"><p class="status err">The AI move builder isn't set up on this site yet (it needs the Cloudflare relay and the GEMINI_API_KEY secret).</p><button class="ghost" data-action="ai-close">Close</button></div>`;
   const refining = !!(BUILD.draft && BUILD.draft.ai);
-  return `<div class="ai-box"><h3>${refining ? 'Change it' : `Describe a new ${elName(el).toLowerCase()} ${a.ult ? 'ultimate' : 'move'}`}</h3>
+  return `<div class="ai-box"><h3>${refining ? 'Want to change it?' : `Describe your ${elName(el).toLowerCase()} ${a.ult ? 'ultimate' : 'move'}`}</h3>${refining ? '' : '<p class="note">Say what it should do. The AI builds it, you watch it, then keep it or ask for changes.</p>'}
     ${refining ? '' : `<div class="seg" style="margin:6px 0">${[[false, 'Move'], [true, 'Ultimate']].map(([v, l]) => `<button data-aiult="${v ? 1 : 0}" aria-pressed="${a.ult === v}">${l}</button>`).join('')}</div>`}
     <textarea data-aiprompt rows="2" maxlength="300" placeholder="${refining ? 'e.g. make it faster and add homing' : 'e.g. ' + esc(AI_EXAMPLES[el])}">${esc(a.prompt || '')}</textarea>
     <div class="edit-row">${a.busy ? '<button disabled>Building…</button>' : `<button class="cta" data-action="ai-go">${refining ? 'Update move' : 'Create move'}</button>`}<button class="ghost" data-action="ai-close">Close</button></div>
@@ -3276,7 +3337,8 @@ function draftHTML() {
   const over = d.ult ? m.build_cost > ULT_BUDGET : (m.mana_cost > 60 || m.build_cost > 40);
   const rng = (f, label, min, max, val, step = 1) => `<label>${label} <output>${val}</output><input type="range" min="${min}" max="${max}" step="${step}" value="${val}" data-bd="${f}"></label>`;
   const eff = n => { const e = m.effects[n]; return `<label>Effect ${n + 1}<select data-bd="eff${n}"><option value="">none</option>${Object.keys(EFFECT_COST).map(t => `<option ${e && e.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>${e ? rng('effs' + n, 'Strength', 1, 5, e.strength) : ''}`; };
-  return `<div class="draft"><h3>${d.ai ? 'Your AI-built ' + (d.ult ? 'ultimate' : 'move') : d.ult ? 'New ultimate' : 'New move'}</h3>
+  return `<div class="draft"><h3>${d.ai ? 'Your AI-built ' + (d.ult ? 'ultimate' : 'move') : d.editOf ? 'Edit ' + esc(m.name) : d.ult ? 'New ultimate' : 'New move'}</h3>
+    ${d.editOf && !d.editOf.startsWith('c') ? '<p class="note">This is a starter move, so your changes are saved as your own copy and swapped into your loadout.</p>' : ''}
     <div class="bgrid">
       <label class="wide">Name<input type="text" maxlength="26" value="${esc(m.name)}" data-bd="name"></label>
       <label>Type<select data-bd="type">${Object.keys(TYPE_BASE).map(t => `<option ${m.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
@@ -3287,7 +3349,7 @@ function draftHTML() {
     </div>
     <p class="type-hint">${TYPE_HINTS[m.type]}</p>
     <p class="${over ? 'status err' : 'note'}">${d.ult ? `Build ${m.build_cost} of ${ULT_BUDGET}` : `Build ${m.build_cost} · ${m.mana_cost} mana per cast`}${over ? (d.ult ? ' — too strong for an ultimate' : ' — too strong for one move (max 40 build, 60 mana)') : ''}</p>
-    <div class="edit-row"><button class="cta" data-action="bsave" ${over ? 'disabled' : ''}>${d.ai ? 'Add to my moves' : 'Save move'}</button><button data-action="bwatch">Watch it</button><button class="ghost" data-action="bcancel">${d.ai ? 'Discard' : 'Cancel'}</button></div>
+    <div class="edit-row"><button class="cta" data-action="bsave" ${over ? 'disabled' : ''}>${d.ai ? 'Add to my moves' : d.editOf ? 'Save changes' : 'Save move'}</button><button data-action="bwatch">Watch it</button><button class="ghost" data-action="bcancel">${d.ai ? 'Discard' : 'Cancel'}</button></div>
   </div>`;
 }
 function draftEdit(field, value) {
@@ -3360,8 +3422,9 @@ if (window.StickAccount) window.StickAccount.onChange(st => {
   const wasUser = ACC.user && ACC.user.uid;
   ACC.user = st.user; ACC.username = st.username; ACC.ready = st.ready;
   if (st.user && st.user.uid !== wasUser) mergeCloudLib(st.lib);
-  if (st.user && !st.username && ['menu', 'play', 'build', 'practice-menu'].includes(state)) { showUsername(); return; }
-  if (state === 'menu') showMenu();
+  updateTopbar();
+  if (st.user && !st.username && ['menu', 'login', 'play', 'build', 'practice-menu'].includes(state)) { showUsername(); return; }
+  if (state === 'menu' || state === 'login' || (!st.user && needLogin() && !fighting())) showMenu();
   else if (state === 'build') showBuild();
 });
 initSample();

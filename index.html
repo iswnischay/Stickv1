@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="theme-color" content="#050a14">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Stick V1</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -14,8 +15,8 @@
 <body>
 <main id="app">
   <header class="topbar">
-    <div class="brand">Stick V1</div>
-    <div class="tagline">Pick an element, build your moves and ultimate, then fight.</div>
+    <div class="brand">STICK<span>V1</span></div>
+    <div id="userchip" class="userchip" hidden></div>
   </header>
   <div id="stage"><canvas id="cv" aria-label="Fight arena"></canvas></div>
   <p class="legend" id="legend"></p>
