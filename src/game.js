@@ -399,6 +399,11 @@ function readLocalInput(sc, padIndex) {
     pad.moves.forEach((p, i) => { if (p && !r.casts.includes(i)) r.casts.push(i); });
     r.pause = pad.pause; if (pad.dodge) r.dodge = true;
   }
+  if (TOUCH.on && opts.mode !== 'pvp') { // phone/tablet gestures join in; keys and controllers keep working too
+    const t = readTouch();
+    if (!r.ax) r.ax = t.ax; r.wantJump = r.wantJump || t.wantJump; r.jumpHeld = r.jumpHeld || t.jumpHeld; r.drop = r.drop || t.drop;
+    if (t.dodge) r.dodge = true; t.casts.forEach(i => { if (!r.casts.includes(i)) r.casts.push(i); });
+  }
   return r;
 }
 
@@ -1053,7 +1058,7 @@ function starPath(r1, r2, n, rot = 0) { ctx.beginPath(); for (let k = 0; k < n *
 
 /* particles: each element has its own kind of spark */
 function spawnP(x, y, el, vx, vy, life, size, kind) {
-  if (particles.length > 900) return;
+  if (particles.length > (TOUCH.on ? 450 : 900)) return;
   particles.push({ x, y, vx, vy, life, max: life, el, size, kind: kind || PKIND[el] || 'dot', rot: Math.random() * 6 });
 }
 function burstParticles(x, y, el, n, spd = 260) {
@@ -1604,6 +1609,7 @@ function drawStains() {
   ctx.globalAlpha = 1; stains = stains.filter(s => s.life > 0);
 }
 function impactFx(x, y, el, k = 1, code = 0, dmg = 3) {
+  if (TOUCH.on && TOUCH.vib && navigator.vibrate) { try { navigator.vibrate(k > 1.2 ? 28 : 12); } catch (e) {} }
   const blindMove = Math.floor(code / 100) % 10 === 1, ult = Math.floor(code / 1000) % 10 === 1, dir = Math.floor(code / 10000) ? -1 : 1;
   const type = TYPE_IDS[(code % 100) - 1] || 'projectile';
   // blinding moves already take over the victim's screen, so they skip the impact frame
@@ -1813,7 +1819,7 @@ function drawTexts() {
 }
 
 function roundRect(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
-function slotLabel(f, i) { if (f.isBot) return '·'; const sc = schemeFor(f.slot); return sc ? keyShort(binds[sc]['m' + (i + 1)][0]) : '·'; }
+function slotLabel(f, i) { if (f.isBot) return '·'; if (TOUCH.on && isMine(f)) return ['← tap', '↑', '→', '↓', '★'][i]; const sc = schemeFor(f.slot); return sc ? keyShort(binds[sc]['m' + (i + 1)][0]) : '·'; }
 
 function drawHUD() {
   if (!fighters.length) return;
@@ -2060,14 +2066,16 @@ function render() {
   if (!PV.on && state !== 'ko') { drawHUD(); drawBanner(); }
   drawReconnect();
   if (typeof exitBtn !== 'undefined') exitBtn.hidden = !(opts.mode === 'practice' && state === 'fight' && !PV.on);
+  touchFrame();
   const aiming = fighting() && fighters.some(f => !f.isBot && f.aimMode === 'mouse');
   cv.classList.toggle('aiming', aiming);
 }
 
 function resize() {
   const host = cv.parentElement || document.getElementById('stage');
-  const avail = host.clientWidth || 600;
-  const maxH = host.id === 'stage' ? Math.max(260, innerHeight - 150) : 2000;
+  const phoneFight = typeof TOUCH !== 'undefined' && TOUCH.on && document.body.classList.contains('in-fight') && host.id === 'stage';
+  const avail = phoneFight ? innerWidth : (host.clientWidth || 600);
+  const maxH = phoneFight ? innerHeight - 2 : host.id === 'stage' ? Math.max(260, innerHeight - 150) : 2000;
   const w = Math.max(300, Math.min(avail, maxH * 2));
   cv.style.width = w + 'px'; cv.style.height = (w / 2) + 'px';
   const dpr = Math.min(2, devicePixelRatio || 1);
@@ -3269,6 +3277,12 @@ function showSettings() {
   showScreen(`<div class="narrow">
     <h2>Settings</h2>
     <p class="note">Saved on this device only.</p>
+    ${TOUCH.on ? `<h3 style="margin-top:18px">Touch controls</h3>
+    <div class="opt"><span>Easy mode</span><div class="seg"><button data-tset="easy:1" aria-pressed="${TOUCH.easy}">On</button><button data-tset="easy:0" aria-pressed="${!TOUCH.easy}">Off</button></div></div>
+    <p class="note">On: a tap on the right picks the best ready move for you. Swipes and the move wheel still pick exactly.</p>
+    <div class="opt"><span>Left-handed</span><div class="seg"><button data-tset="lefty:1" aria-pressed="${TOUCH.lefty}">On</button><button data-tset="lefty:0" aria-pressed="${!TOUCH.lefty}">Off</button></div></div>
+    <div class="opt"><span>Vibration</span><div class="seg"><button data-tset="vib:1" aria-pressed="${TOUCH.vib}">On</button><button data-tset="vib:0" aria-pressed="${!TOUCH.vib}">Off</button></div></div>
+    <div class="go" style="margin-top:6px"><button class="ghost pill small" data-tset="tut:1">Show the controls guide again</button></div>` : ''}
     <h3 style="margin-top:18px">Effects</h3>
     <div class="opt"><span>Impact frames</span><div class="seg"><button data-impact="on" aria-pressed="${impactOn}">On</button><button data-impact="off" aria-pressed="${!impactOn}">Off</button></div></div>
     <p class="note">The split-second high-contrast flash on big hits. Turn it off if flashing bothers you (it's also off when your system asks for reduced motion).</p>
@@ -3601,6 +3615,7 @@ screenEl.addEventListener('click', e => {
   }
   if (btn.dataset.netpick) { const keep = {}; screenEl.querySelectorAll('[data-setting]').forEach(i => { keep[i.dataset.setting] = i.value; }); settings.net = btn.dataset.netpick; showSettings(); Object.entries(keep).forEach(([k, v]) => { const i = screenEl.querySelector(`[data-setting="${k}"]`); if (i) i.value = v; }); return; }
   if (btn.dataset.aiult !== undefined) { BUILD.ai.ult = btn.dataset.aiult === '1'; const box = screenEl.querySelector('[data-aiprompt]'); if (box) BUILD.ai.prompt = box.value; showBuild(); return; }
+  if (btn.dataset.tset) { const [k, v] = btn.dataset.tset.split(':'); if (k === 'tut') { try { localStorage.removeItem('stick-touch-tut'); } catch (e) {} TOUCH.tutShown = false; } else { TOUCH[k] = v === '1'; saveTouch(); } showSettings(); return; }
   if (btn.dataset.blood) { bloodOn = btn.dataset.blood === 'on'; try { localStorage.setItem('stick-blood', bloodOn ? 'on' : 'off'); } catch (e) {} if (!bloodOn) stains = []; showSettings(); return; }
   if (btn.dataset.impact) { impactOn = btn.dataset.impact === 'on'; try { localStorage.setItem('stick-impact', impactOn ? 'on' : 'off'); } catch (e) {} showSettings(); return; }
   if (btn.dataset.pel) { sideEls[0] = btn.dataset.pel; showPracticeMenu(); return; }
@@ -3722,6 +3737,7 @@ screenEl.addEventListener('click', e => {
 });
 
 function updateLegend() {
+  if (typeof TOUCH !== 'undefined' && TOUCH.on) { legendEl.innerHTML = 'Left thumb: slide to move, flick up to jump, double-tap to dodge &nbsp;|&nbsp; Right thumb: tap, swipe or hold for moves'; return; }
   const s = sc => { const b = binds[sc], k = a => `<kbd>${esc(keyShort(b[a][0]))}</kbd>`; return `${k('left')}${k('right')} move · ${k('jump')} jump · ${k('drop')} drop · ${['m1', 'm2', 'm3', 'm4'].map(k).join('')} moves · ${b.dodge ? k('dodge') + ' dodge · ' : ''}${k('m5')} ultimate`; };
   legendEl.innerHTML = opts.mode !== 'pvp'
     ? `You: ${opts.aim === 'mouse' ? 'aim with the mouse · ' : ''}${s(soloScheme())} &nbsp;|&nbsp; controller works too &nbsp;|&nbsp; <kbd>Esc</kbd> pause`
@@ -4103,6 +4119,209 @@ function prepPreviewHTML() {
   if (!PREP_PV) return '';
   const p = plan[PREP_PV.side]; const m = p && p.result.moves[PREP_PV.slot]; if (!m) return '';
   return `<div class="prep-pv" style="--el: var(--el-${p.element})"><div class="pv-stage"></div><div class="pv-info"><h3>${esc(m.name)}</h3>${m.flavor ? `<p class="flavor">${esc(m.flavor)}</p>` : ''}<button class="ghost" data-action="pv-close">Close</button></div></div>`;
+}
+
+/* ---------- touch controls (phones and tablets) ----------
+   Nothing sits on screen permanently. Left thumb: an invisible joystick that appears where you touch
+   (slide to move, flick up to jump, pull down to drop, double-tap to dodge). Right thumb: tap for move 1,
+   swipe left/up/right/down for moves 1-4, or press and hold to open a move wheel and slide to pick.
+   The ultimate fades in as a glowing button when it's charged (or two-finger tap the right side).
+   Easy mode (default): a tap casts whichever ready move suits the moment best.
+   Everything here only runs on touch devices; keyboard, mouse and controller are untouched. */
+const TOUCH = (() => {
+  let saved = {}; try { saved = JSON.parse(localStorage.getItem('stick-touch') || '{}') || {}; } catch (e) {}
+  return { on: false, easy: saved.easy !== false, lefty: !!saved.lefty, vib: saved.vib !== false, L: null, R: [], lastLeftTap: null, ev: { jump: 0, dodge: 0, casts: [] }, wheelSel: -1 };
+})();
+function saveTouch() { try { localStorage.setItem('stick-touch', JSON.stringify({ easy: TOUCH.easy, lefty: TOUCH.lefty, vib: TOUCH.vib })); } catch (e) {} }
+function setTouchOn() { if (TOUCH.on) return; TOUCH.on = true; document.body.classList.add('touch'); updateLegend(); }
+try { if (matchMedia('(pointer: coarse)').matches && (navigator.maxTouchPoints || 0) > 0) setTouchOn(); } catch (e) {}
+addEventListener('touchstart', setTouchOn, { passive: true, capture: true });
+
+// the overlay that holds the on-demand controls
+const tui = document.createElement('div'); tui.id = 'touch-ui';
+tui.innerHTML = `<div class="t-ring" hidden><div class="t-knob"></div></div>
+  <div class="t-wheel" hidden>${[0, 1, 2, 3].map(i => `<div class="t-item" data-i="${i}"><b></b><small></small></div>`).join('')}<div class="t-hub"></div></div>
+  <button class="t-btn t-ult" hidden>ULT</button>
+  <button class="t-btn t-pause" aria-label="Pause">II</button>
+  <div class="t-pausemenu" hidden><button class="t-btn" data-t="resume">Resume</button><button class="t-btn" data-t="quit">Quit match</button></div>
+  <div class="t-tut" hidden><h3>Phone controls</h3>
+    <p><b>Left thumb</b> &nbsp;slide to move · flick up to jump · pull down to drop · double-tap to dodge</p>
+    <p><b>Right thumb</b> &nbsp;tap to attack · swipe ← ↑ → ↓ for moves 1-4 · hold to open the move wheel</p>
+    <p><b>Ultimate</b> &nbsp;a glowing button appears when it's charged</p>
+    <button class="t-btn" data-t="tut-ok">Got it</button></div>`;
+document.body.appendChild(tui);
+const $t = s => tui.querySelector(s);
+const tRing = $t('.t-ring'), tKnob = $t('.t-knob'), tWheel = $t('.t-wheel'), tUlt = $t('.t-ult'), tPause = $t('.t-pause'), tPauseMenu = $t('.t-pausemenu'), tTut = $t('.t-tut');
+
+const touchFighter = () => fighters.find(f => isMine(f)) || null;
+const touchActive = () => TOUCH.on && (fighting() || state === 'timeup') && !PV.on && screenEl.hidden && opts.mode !== 'pvp';
+const isRightSide = x => (x >= innerWidth / 2) !== TOUCH.lefty;
+function ripple(x, y, big) {
+  const r = document.createElement('div'); r.className = 't-ripple' + (big ? ' big' : ''); r.style.left = x + 'px'; r.style.top = y + 'px';
+  tui.appendChild(r); setTimeout(() => r.remove(), 450);
+}
+// direction of a swipe -> move slot: left = 1, up = 2, right = 3, down = 4
+const swipeSlot = (dx, dy) => Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 0 : 2) : (dy < 0 ? 1 : 3);
+const WHEEL_POS = [[-1, 0], [0, -1], [1, 0], [0, 1]];
+// Easy mode: pick the move that fits the situation, using the same judgement as the bot.
+function autoPick(f) {
+  const o = opp(f); if (!o) return 0;
+  const dx = o.x - f.x, adx = Math.abs(dx), dist = Math.hypot(dx, o.y - f.y);
+  const threat = projectiles.some(p => p.owner === o && Math.hypot(p.x - f.x, p.y - chestY(f)) < 240 && Math.cos(p.ang) * (f.x - p.x) > 0) || beams.some(b => b.owner === o && !b.fired);
+  let best = -1, bs = 0;
+  for (let i = 0; i < 4; i++) {
+    const m = f.moves[i]; if (!m || !canCast(f, i)) continue;
+    let s = 0;
+    if (m.type === 'shield') s = threat ? 5 : 0.1;
+    else if (m.type === 'dash') s = threat ? 3 : (adx > 620 ? 1.6 : 0.3);
+    else if (m.type === 'projectile') s = (dist < 800 ? 2.4 : 0.8) + (effOf(m, 'homing') ? 0.8 : 0);
+    else if (m.type === 'beam') s = dist < 900 ? 2.8 : 0.5;
+    else if (m.type === 'burst') s = dist < 50 + m.stats.size * 15 ? 4 : 0.2;
+    else if (m.type === 'zone') s = dist > 120 && dist < 420 ? 2.2 : 0.4;
+    else if (m.type === 'rain' || m.type === 'strike') s = 2.3;
+    else if (m.type === 'orbit') s = f.orbit ? 0 : dist < 170 ? 3.5 : threat ? 2.6 : 0.5;
+    else if (m.type === 'wave') s = o.onGround && Math.abs(o.y - f.y) < 12 ? 2.6 : 0.3;
+    else if (m.type === 'trap') s = dist < 320 ? 1.9 : 0.6;
+    else if (m.type === 'summon') s = summons.some(x => x.owner === f) ? 0 : 2.4;
+    if (s > bs) { bs = s; best = i; }
+  }
+  return best >= 0 ? best : 0;
+}
+// the bottom move cards double as buttons for whoever prefers tapping them
+function cardAt(cx, cy) {
+  const f = touchFighter(); if (!f) return -1;
+  const r = cv.getBoundingClientRect(); if (cx < r.left || cx > r.right || cy < r.top || cy > r.bottom) return -1;
+  const x = (cx - r.left) / r.width * W, y = (cy - r.top) / r.height * H, sw = 104, sh = 58, gap = 8, sy = GROUND + 12, left = f.slot === 0;
+  if (y < sy || y > sy + sh) return -1;
+  for (let i = 0; i < 5; i++) { const sx = left ? 20 + i * (sw + gap) : W - 20 - (5 - i) * (sw + gap) + gap; if (x >= sx && x <= sx + sw) return f.moves[i] ? i : -1; }
+  return -1;
+}
+function openWheel(R) {
+  const f = touchFighter(); if (!f) return;
+  R.wheel = true; TOUCH.wheelSel = -1;
+  tWheel.style.left = R.x0 + 'px'; tWheel.style.top = R.y0 + 'px'; tWheel.hidden = false;
+  tWheel.querySelectorAll('.t-item').forEach(el => {
+    const i = Number(el.dataset.i), m = f.moves[i];
+    el.querySelector('b').textContent = m ? m.name : '—';
+    el.querySelector('small').textContent = !m ? '' : f.cds[i] > 0 ? f.cds[i].toFixed(1) + 's' : f.mana < m.mana_cost ? 'no mana' : ['←', '↑', '→', '↓'][i];
+    el.classList.toggle('off', !m || !canCast(f, i)); el.classList.remove('sel');
+    el.style.setProperty('--c', `var(--el-${f.element})`);
+  });
+  if (TOUCH.vib && navigator.vibrate) navigator.vibrate(8);
+}
+function closeWheel() { tWheel.hidden = true; TOUCH.wheelSel = -1; }
+function castTouch(i) { TOUCH.ev.casts.push(i); }
+
+function onTouchStart(e) {
+  if (!touchActive()) return;
+  if (e.target.closest && e.target.closest('.t-btn, .t-tut, .t-pausemenu')) return; // our own buttons handle themselves
+  e.preventDefault();
+  const now = performance.now();
+  for (const t of e.changedTouches) {
+    const x = t.clientX, y = t.clientY;
+    if (!isRightSide(x)) {
+      if (TOUCH.L) continue;
+      const lt = TOUCH.lastLeftTap;
+      if (lt && now - lt.t < 300 && Math.hypot(x - lt.x, y - lt.y) < 70) { TOUCH.ev.dodge++; ripple(x, y, true); TOUCH.lastLeftTap = null; }
+      TOUCH.L = { id: t.identifier, ox: x, oy: y, x, y, anchorY: y, t: now };
+      tRing.style.left = x + 'px'; tRing.style.top = y + 'px'; tKnob.style.transform = 'translate(-50%,-50%)'; tRing.hidden = false;
+    } else {
+      const card = cardAt(x, y);
+      if (card >= 0) { castTouch(card); ripple(x, y); continue; }
+      const R = { id: t.identifier, x0: x, y0: y, x, y, t0: now, wheel: false, done: false };
+      const other = TOUCH.R.find(r => !r.done && now - r.t0 < 180);
+      if (other) { other.done = true; R.done = true; castTouch(4); ripple((x + other.x0) / 2, (y + other.y0) / 2, true); } // two-finger tap = ultimate
+      TOUCH.R.push(R);
+      R.timer = setTimeout(() => { if (!R.done && !R.wheel && Math.hypot(R.x - R.x0, R.y - R.y0) < 22 && TOUCH.R.includes(R)) openWheel(R); }, 230);
+    }
+  }
+}
+function onTouchMove(e) {
+  if (!touchActive()) return;
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    const L = TOUCH.L;
+    if (L && t.identifier === L.id) {
+      L.x = t.clientX; L.y = t.clientY;
+      // floating stick: if the thumb wanders far, the centre follows it
+      const dx = L.x - L.ox, lim = 64; if (Math.abs(dx) > lim) L.ox += dx - Math.sign(dx) * lim;
+      if (L.y < L.anchorY - 34) { TOUCH.ev.jump++; L.anchorY = L.y; } else if (L.y > L.anchorY + 16) L.anchorY = L.y;
+      const kx = clamp(L.x - L.ox, -lim, lim), ky = clamp(L.y - L.oy, -lim, lim);
+      tRing.style.left = L.ox + 'px'; tKnob.style.transform = `translate(calc(-50% + ${kx}px), calc(-50% + ${ky}px))`;
+      continue;
+    }
+    const R = TOUCH.R.find(r => r.id === t.identifier); if (!R) continue;
+    R.x = t.clientX; R.y = t.clientY;
+    if (R.wheel) {
+      const dx = R.x - R.x0, dy = R.y - R.y0, sel = Math.hypot(dx, dy) > 28 ? swipeSlot(dx, dy) : -1;
+      if (sel !== TOUCH.wheelSel) { TOUCH.wheelSel = sel; tWheel.querySelectorAll('.t-item').forEach(el => el.classList.toggle('sel', Number(el.dataset.i) === sel)); if (sel >= 0 && TOUCH.vib && navigator.vibrate) navigator.vibrate(5); }
+    }
+  }
+}
+function onTouchEnd(e) {
+  if (!TOUCH.on) return;
+  const active = touchActive(); if (active) e.preventDefault();
+  const now = performance.now();
+  for (const t of e.changedTouches) {
+    const L = TOUCH.L;
+    if (L && t.identifier === L.id) {
+      if (now - L.t < 200 && Math.hypot(L.x - L.ox, L.y - L.oy) < 16) TOUCH.lastLeftTap = { t: now, x: L.x, y: L.y };
+      TOUCH.L = null; tRing.hidden = true; continue;
+    }
+    const k = TOUCH.R.findIndex(r => r.id === t.identifier); if (k < 0) continue;
+    const R = TOUCH.R[k]; TOUCH.R.splice(k, 1); clearTimeout(R.timer);
+    if (!active) { closeWheel(); continue; }
+    if (R.wheel) { if (TOUCH.wheelSel >= 0) { castTouch(TOUCH.wheelSel); ripple(R.x, R.y); } closeWheel(); continue; }
+    if (R.done) continue;
+    const dx = R.x - R.x0, dy = R.y - R.y0, d = Math.hypot(dx, dy), dt = now - R.t0;
+    if (d > 40 && dt < 400) { castTouch(swipeSlot(dx, dy)); ripple(R.x, R.y); }
+    else if (d < 26) { const f = touchFighter(); castTouch(TOUCH.easy && f ? autoPick(f) : 0); ripple(R.x0, R.y0); }
+  }
+}
+addEventListener('touchstart', onTouchStart, { passive: false });
+addEventListener('touchmove', onTouchMove, { passive: false });
+addEventListener('touchend', onTouchEnd, { passive: false });
+addEventListener('touchcancel', onTouchEnd, { passive: false });
+
+// buttons in the overlay
+const tapBtn = (el, fn) => { el.addEventListener('touchstart', e => { e.preventDefault(); e.stopPropagation(); fn(); }, { passive: false }); el.addEventListener('click', fn); };
+tapBtn(tUlt, () => { castTouch(4); ripple(tUlt.getBoundingClientRect().left + 30, tUlt.getBoundingClientRect().top + 30, true); });
+tapBtn(tPause, () => { if (opts.mode === 'online') return; togglePause(); });
+tui.querySelectorAll('[data-t]').forEach(b => tapBtn(b, () => {
+  const a = b.dataset.t;
+  if (a === 'resume') { if (paused) togglePause(); }
+  else if (a === 'quit') { paused = false; if (opts.mode === 'practice') leavePractice(); else { fighters = []; showMenu(); } }
+  else if (a === 'tut-ok') { tTut.hidden = true; try { localStorage.setItem('stick-touch-tut', '1'); } catch (e) {} if (paused && TOUCH.tutPaused) { TOUCH.tutPaused = false; togglePause(); } }
+}));
+
+// read by readLocalInput: merges the touch state into the normal input for your fighter
+function readTouch() {
+  const out = { ax: 0, jumpHeld: false, drop: false, wantJump: false, dodge: false, casts: [] };
+  if (!TOUCH.on) return out;
+  const L = TOUCH.L;
+  if (L) { const dx = L.x - L.ox, dy = L.y - L.oy; out.ax = Math.abs(dx) > 16 ? Math.sign(dx) : 0; out.jumpHeld = -dy > 18; out.drop = dy > 46; }
+  if (TOUCH.ev.jump) { out.wantJump = true; out.jumpHeld = true; TOUCH.ev.jump = 0; }
+  if (TOUCH.ev.dodge) { out.dodge = true; TOUCH.ev.dodge = 0; }
+  if (TOUCH.ev.casts.length) { out.casts = TOUCH.ev.casts.splice(0); }
+  return out;
+}
+// per frame: show/hide the on-demand pieces and keep the layout right
+let lastInFight = null;
+function touchFrame() {
+  const inFight = TOUCH.on && (fighting() || state === 'timeup' || state === 'ko') && !PV.on && screenEl.hidden;
+  if (inFight !== lastInFight) { lastInFight = inFight; document.body.classList.toggle('in-fight', inFight); resize(); if (!inFight) { TOUCH.L = null; TOUCH.R = []; tRing.hidden = true; closeWheel(); } }
+  if (!TOUCH.on) return;
+  const f = touchFighter(), ultReady = inFight && state === 'fight' && f && f.moves[4] && f.ult >= ULT_MAX;
+  tUlt.hidden = !ultReady || !tWheel.hidden; tui.classList.toggle('ult-ready', !!ultReady);
+  if (ultReady) tUlt.style.setProperty('--c', `var(--el-${f.element})`);
+  tPause.hidden = !inFight || opts.mode === 'online' || state === 'ko';
+  tPauseMenu.hidden = !(inFight && paused && !TOUCH.tutPaused);
+  // first fight on a phone: a short guide (pauses the countdown when that's allowed)
+  if (inFight && (state === 'countdown' || (state === 'fight' && opts.mode === 'practice')) && tTut.hidden && !TOUCH.tutShown) {
+    let seen = false; try { seen = localStorage.getItem('stick-touch-tut') === '1'; } catch (e) {}
+    TOUCH.tutShown = true;
+    if (!seen) { tTut.hidden = false; if (opts.mode !== 'online' && !paused) { TOUCH.tutPaused = true; togglePause(); } }
+  }
 }
 
 /* ---------- boot ---------- */

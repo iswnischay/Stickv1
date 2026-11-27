@@ -85,6 +85,16 @@ npm run dist:win    # on Windows
 npm run dist:mac    # on a Mac
 ```
 
+## On phones and tablets
+
+Open the site and install it: Android Chrome shows **Install app**; on iPhone use Share → **Add to Home Screen**. It runs full screen and Practice / Vs Bot work offline. Updates arrive automatically.
+
+Touch controls appear only where your thumbs are:
+- **Left thumb:** slide to move, flick up to jump (again in the air to double jump), pull down to drop, double-tap to dodge.
+- **Right thumb:** tap to attack, swipe ← ↑ → ↓ for moves 1–4, or press and hold to open the move wheel and slide to pick. The move cards at the bottom can be tapped too.
+- **Ultimate:** a glowing button fades in when it's charged (or two-finger tap the right side).
+- **Easy mode** (on by default): a tap casts the best ready move for the moment. Turn it off, switch to left-handed, or turn vibration off in Settings.
+
 ## Controls
 
 - Keyboard: A/D move, Space or W jump (hold for higher, tap again to double jump), S drop, Shift or H dodge (a quick roll you can't be hit during; hold a direction to pick which way). J K L I for moves 1–4, O for the ultimate. Attacks aim automatically, or switch to mouse aim on the menu.
